@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ledger — Rental Deal Analyzer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink: #101B29;
+    --ink-2: #1B2A3D;
+    --ink-3: #253A52;
+    --paper: #F4EFE2;
+    --paper-dim: #E7E0CC;
+    --brass: #B8862B;
+    --brass-bright: #D9A63E;
+    --green: #4C8567;
+    --amber: #C08A2E;
+    --red: #B4453A;
+    --line: rgba(244,239,226,0.14);
+  }
+
+  *{box-sizing:border-box;}
+
+  body{
+    margin:0;
+    background:
+      radial-gradient(ellipse at top, #1a2a3f 0%, var(--ink) 55%),
+      var(--ink);
+    color: var(--paper);
+    font-family: 'Inter', sans-serif;
+    min-height:100vh;
+    padding: 48px 20px 80px;
+  }
+
+  .wrap{
+    max-width: 720px;
+    margin: 0 auto;
+  }
+
+  .masthead{
+    text-align:center;
+    margin-bottom: 40px;
+  }
+
+  .masthead .eyebrow{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+    color: var(--brass-bright);
+    margin-bottom: 14px;
+  }
+
+  .masthead h1{
+    font-family:'Fraunces', serif;
+    font-optical-sizing: auto;
+    font-weight: 600;
+    font-size: clamp(32px, 5vw, 46px);
+    margin: 0 0 10px;
+    letter-spacing: -0.01em;
+  }
+
+  .masthead p{
+    color: rgba(244,239,226,0.6);
+    font-size: 15px;
+    max-width: 440px;
+    margin: 0 auto;
+    line-height: 1.5;
+  }
+
+  .ledger{
+    background: var(--paper);
+    color: var(--ink);
+    border-radius: 4px;
+    box-shadow: 0 30px 60px -20px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,0,0,0.06);
+    padding: 40px 36px 32px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .ledger::before{
+    content:"";
+    position:absolute;
+    top:0; left:0; right:0;
+    height: 6px;
+    background: linear-gradient(90deg, var(--brass), var(--brass-bright), var(--brass));
+  }
+
+  .section-title{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--brass);
+    border-bottom: 1px solid rgba(16,27,41,0.15);
+    padding-bottom: 8px;
+    margin: 28px 0 18px;
+  }
+
+  .section-title:first-of-type{ margin-top: 0; }
+
+  .grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px 24px;
+  }
+
+  .grid.narrow{ grid-template-columns: 1fr 1fr 1fr; }
+
+  .field{
+    display:flex;
+    flex-direction:column;
+  }
+
+  .field label{
+    font-size: 12.5px;
+    color: rgba(16,27,41,0.6);
+    margin-bottom: 6px;
+    font-weight: 500;
+  }
+
+  .field input{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 15px;
+    padding: 8px 2px;
+    border: none;
+    border-bottom: 1.5px solid rgba(16,27,41,0.25);
+    background: transparent;
+    color: var(--ink);
+    outline: none;
+    transition: border-color 0.15s ease;
+  }
+
+  .field input:focus{
+    border-bottom-color: var(--brass);
+  }
+
+  .field.comp-row{
+    display:grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 10px;
+    grid-column: 1 / -1;
+  }
+
+  .field.comp-row .sub{ display:flex; flex-direction:column; }
+  .field.comp-row .sub label{ font-size: 11px; }
+
+  .comp-label{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: rgba(16,27,41,0.45);
+    align-self:center;
+  }
+
+  button.run{
+    width: 100%;
+    margin-top: 32px;
+    padding: 15px;
+    background: var(--ink);
+    color: var(--paper);
+    border: none;
+    border-radius: 3px;
+    font-family:'JetBrains Mono', monospace;
+    font-size: 13px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background 0.15s ease, transform 0.1s ease;
+  }
+
+  button.run:hover{ background: var(--ink-3); }
+  button.run:active{ transform: scale(0.995); }
+  button.run:disabled{ opacity: 0.5; cursor: default; }
+
+  .results{
+    margin-top: 8px;
+    display:none;
+  }
+
+  .results.show{ display:block; }
+
+  .stamp-wrap{
+    display:flex;
+    justify-content:center;
+    margin: 26px 0 10px;
+  }
+
+  .stamp{
+    font-family:'JetBrains Mono', monospace;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 10px 22px;
+    border: 3px solid currentColor;
+    border-radius: 3px;
+    transform: rotate(-3deg);
+    display:inline-block;
+    position:relative;
+  }
+
+  .stamp::before, .stamp::after{
+    content:"";
+    position:absolute;
+    border: 1px solid currentColor;
+    opacity: 0.5;
+  }
+  .stamp::before{ top:-6px; left:-6px; right:-6px; bottom:-6px; }
+
+  .stamp.green{ color: var(--green); }
+  .stamp.amber{ color: var(--amber); }
+  .stamp.red{ color: var(--red); }
+
+  .metrics{
+    display:grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1px;
+    background: rgba(16,27,41,0.12);
+    border: 1px solid rgba(16,27,41,0.12);
+    margin: 22px 0;
+  }
+
+  .metric{
+    background: var(--paper);
+    padding: 16px 14px;
+  }
+
+  .metric .val{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 20px;
+    font-weight: 600;
+  }
+
+  .metric .val.flag{ color: var(--red); }
+
+  .metric .lbl{
+    font-size: 11px;
+    color: rgba(16,27,41,0.55);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .narrative{
+    font-family:'Fraunces', serif;
+    font-size: 16.5px;
+    line-height: 1.65;
+    color: var(--ink-2);
+    background: var(--paper-dim);
+    border-left: 3px solid var(--brass);
+    padding: 18px 22px;
+    margin-top: 8px;
+    border-radius: 0 3px 3px 0;
+  }
+
+  .narrative .loading{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: rgba(16,27,41,0.5);
+  }
+
+  .disclosure{
+    margin-top: 24px;
+    font-size: 12px;
+    color: rgba(16,27,41,0.45);
+    line-height: 1.5;
+    border-top: 1px dashed rgba(16,27,41,0.2);
+    padding-top: 14px;
+  }
+
+  .footer-note{
+    text-align:center;
+    color: rgba(244,239,226,0.35);
+    font-size: 12.5px;
+    margin-top: 28px;
+    font-family:'JetBrains Mono', monospace;
+  }
+
+  @media (max-width: 560px){
+    .grid, .grid.narrow{ grid-template-columns: 1fr 1fr; }
+    .metrics{ grid-template-columns: 1fr 1fr; }
+    .field.comp-row{ grid-template-columns: 1fr; }
+    .ledger{ padding: 28px 20px 24px; }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    *{ transition: none !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="masthead">
+    <div class="eyebrow">Field Ledger · Deal Inspection</div>
+    <h1>Rental Deal Analyzer</h1>
+    <p>Enter a property's numbers. Get the cash flow, the returns, and a straight verdict on whether it holds up.</p>
+  </div>
+
+  <div class="ledger">
+
+    <div class="section-title">Purchase</div>
+    <div class="grid">
+      <div class="field">
+        <label for="price">Purchase price ($)</label>
+        <input type="number" id="price" placeholder="285000">
+      </div>
+      <div class="field">
+        <label for="downpct">Down payment (%)</label>
+        <input type="number" id="downpct" placeholder="20">
+      </div>
+      <div class="field">
+        <label for="rate">Interest rate (%)</label>
+        <input type="number" step="0.01" id="rate" placeholder="7.0">
+      </div>
+      <div class="field">
+        <label for="term">Loan term (years)</label>
+        <input type="number" id="term" placeholder="30">
+      </div>
+      <div class="field">
+        <label for="closing">Closing costs ($)</label>
+        <input type="number" id="closing" placeholder="6000">
+      </div>
+      <div class="field">
+        <label for="rehab">Rehab / repair budget ($)</label>
+        <input type="number" id="rehab" placeholder="5000">
+      </div>
+    </div>
+
+    <div class="section-title">Income &amp; Operating Costs</div>
+    <div class="grid">
+      <div class="field">
+        <label for="rent">Monthly rent ($)</label>
+        <input type="number" id="rent" placeholder="2100">
+      </div>
+      <div class="field">
+        <label for="vacancy">Vacancy rate (%)</label>
+        <input type="number" id="vacancy" placeholder="6">
+      </div>
+      <div class="field">
+        <label for="taxes">Annual property taxes ($)</label>
+        <input type="number" id="taxes" placeholder="3400">
+      </div>
+      <div class="field">
+        <label for="insurance">Annual insurance ($)</label>
+        <input type="number" id="insurance" placeholder="1400">
+      </div>
+      <div class="field">
+        <label for="hoa">Monthly HOA ($)</label>
+        <input type="number" id="hoa" placeholder="0">
+      </div>
+      <div class="field">
+        <label for="mgmt">Property mgmt fee (%)</label>
+        <input type="number" id="mgmt" placeholder="0">
+      </div>
+      <div class="field">
+        <label for="maint">Maintenance/CapEx reserve (%)</label>
+        <input type="number" id="maint" placeholder="8">
+      </div>
+    </div>
+
+    <div class="section-title">Comps (for valuation check)</div>
+    <div class="grid">
+      <div class="field">
+        <label for="sqft">Subject property sq ft</label>
+        <input type="number" id="sqft" placeholder="1450">
+      </div>
+    </div>
+    <div class="grid" style="margin-top:14px;">
+      <div class="field comp-row">
+        <span class="comp-label">Comp 1</span>
+        <div class="sub"><label>Sale price ($)</label><input type="number" id="c1p" placeholder="292000"></div>
+        <div class="sub"><label>Sq ft</label><input type="number" id="c1s" placeholder="1480"></div>
+      </div>
+      <div class="field comp-row">
+    
+        <span class="comp-label">Comp 2</span>
+        <div class="sub"><label>Sale price ($)</label><input type="number" id="c2p" placeholder="275000"></div>
+        <div class="sub"><label>Sq ft</label><input type="number" id="c2s" placeholder="1390"></div>
+      </div>
+      <div class="field comp-row">
+        <span class="comp-label">Comp 3</span>
+        <div class="sub"><label>Sale price ($)</label><input type="number" id="c3p" placeholder="301000"></div>
+        <div class="sub"><label>Sq ft</label><input type="number" id="c3s" placeholder="1510"></div>
+      </div>
+    </div>
+
+    <button class="run" id="runBtn">Run the analysis</button>
+
+    <div class="results" id="results">
+      <div class="stamp-wrap"><div class="stamp" id="stamp">—</div></div>
+      <div class="metrics" id="metrics"></div>
+      <div class="section-title">Field Notes</div>
+      <div class="narrative" id="narrative"><span class="loading">Drafting summary…</span></div>
+      <div class="disclosure">This is a planning tool, not financial or investment advice. Verify all figures — especially rent and comps — before making an offer.</div>
+    </div>
+
+  </div>
+
+  <div class="footer-note">v0.1 prototype — built to learn, not (yet) to ship</div>
+
+</div>
+
+<script>
+  function num(id){
+  const v = parseFloat(document.getElementById(id).value);
+  return isNaN(v) ? 0 : v;
+}
+
+function fmtMoney(n){
+  if (n === null || n === undefined || !isFinite(n)) return '—';
+  const sign = n < 0 ? '-' : '';
+  return sign + '$' + Math.abs(Math.round(n)).toLocaleString();
+}
+
+function fmtPct(n){
+  if (n === null || n === undefined || !isFinite(n)) return '—';
+  return n.toFixed(1) + '%';
+}
+
+function renderMetrics(m){
+  const cells = [
+    ['Monthly Cash Flow', fmtMoney(m.cashFlowMonthly), m.cashFlowMonthly !== null && m.cashFlowMonthly < 0],
+    ['Cap Rate', fmtPct(m.capRate), m.capRate !== null && m.capRate < 4],
+    ['Cash-on-Cash Return', fmtPct(m.cashOnCash), m.cashOnCash !== null && m.cashOnCash < 4],
+    ['DSCR', m.dscr !== null && m.dscr !== undefined ? m.dscr.toFixed(2) : '—', m.dscr !== null && m.dscr < 1.0],
+    ['Monthly NOI', fmtMoney(m.noiMonthly), false],
+    ['Break-even Occupancy', fmtPct(m.breakEvenOccupancy), m.breakEvenOccupancy !== null && m.breakEvenOccupancy > 90],
+    ['Total Cash Invested', fmtMoney(m.totalCashInvested), false],
+    ['Monthly P&I Payment', fmtMoney(m.monthlyPI), false],
+    ['Value vs. Comps', m.valueDeltaPct !== null && m.valueDeltaPct !== undefined ? (m.valueDeltaPct > 0 ? '+' : '') + m.valueDeltaPct.toFixed(1) + '%' : '—', m.valueDeltaPct !== null && m.valueDeltaPct > 8],
+  ];
+  return cells.map(([lbl, val, flag]) =>
+    `<div class="metric"><div class="val${flag ? ' flag' : ''}">${val}</div><div class="lbl">${lbl}</div></div>`
+  ).join('');
+}
+
+document.getElementById('runBtn').addEventListener('click', async () => {
+  const inputs = {
+    price: num('price'),
+    downPct: num('downpct'),
+    rate: num('rate'),
+    termYears: num('term'),
+    closing: num('closing'),
+    rehab: num('rehab'),
+    rent: num('rent'),
+    vacancyPct: num('vacancy'),
+    annualTaxes: num('taxes'),
+    annualInsurance: num('insurance'),
+    hoaMonthly: num('hoa'),
+    mgmtPct: num('mgmt'),
+    maintPct: num('maint'),
+    sqft: num('sqft'),
+    comps: [
+      { price: num('c1p'), sqft: num('c1s') },
+      { price: num('c2p'), sqft: num('c2s') },
+      { price: num('c3p'), sqft: num('c3s') },
+    ]
+  };
+
+  if (inputs.price <= 0 || inputs.rent <= 0) {
+    alert('Enter at least a purchase price and monthly rent to run the analysis.');
+    return;
+  }
+
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true;
+  btn.textContent = 'Calculating…';
+
+  document.getElementById('results').classList.add('show');
+  document.getElementById('narrative').innerHTML = '<span class="loading">Drafting summary…</span>';
+
+  try {
+    const response = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(inputs)
+    });
+
+    if (!response.ok) throw new Error('Server error');
+
+    const { metrics, verdict, narrative } = await response.json();
+
+    const stampEl = document.getElementById('stamp');
+    stampEl.textContent = verdict.label;
+    stampEl.className = 'stamp ' + verdict.cls;
+
+    document.getElementById('metrics').innerHTML = renderMetrics(metrics);
+    document.getElementById('narrative').textContent = narrative;
+
+  } catch (err) {
+    console.error(err);
+    document.getElementById('narrative').textContent =
+      'Something went wrong reaching the server. Make sure server.js is running, then try again.';
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Run the analysis';
+});
+</script>
+
+</body>
+</html>
