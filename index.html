@@ -396,7 +396,15 @@
       <div class="section-title">Field Notes</div>
       <div class="narrative" id="narrative"><span class="loading">Drafting summary…</span></div>
       <div class="disclosure">This is a planning tool, not financial or investment advice. Verify all figures — especially rent and comps — before making an offer.</div>
+
+      <button class="run" id="saveBtn" style="margin-top:14px; background:var(--brass);">Save this deal</button>
+      <div id="saveStatus" style="font-family:'JetBrains Mono', monospace; font-size:12px; margin-top:10px; text-align:center;"></div>
     </div>
+
+    <div class="section-title">Saved Deals</div>
+    <div id="savedDeals" style="font-family:'JetBrains Mono', monospace; font-size:13px; color:rgba(16,27,41,0.7);">Loading...</div>
+
+  </div>
 
   </div>
 
@@ -491,6 +499,9 @@ document.getElementById('runBtn').addEventListener('click', async () => {
     document.getElementById('metrics').innerHTML = renderMetrics(metrics);
     document.getElementById('narrative').textContent = narrative;
 
+    lastInputs = inputs;
+    lastMetrics = metrics;
+
   } catch (err) {
     console.error(err);
     document.getElementById('narrative').textContent =
@@ -500,6 +511,66 @@ document.getElementById('runBtn').addEventListener('click', async () => {
   btn.disabled = false;
   btn.textContent = 'Run the analysis';
 });
+let lastInputs = null;
+let lastMetrics = null;
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  if (!lastInputs || !lastMetrics) {
+    alert('Run an analysis first before saving.');
+    return;
+  }
+
+  const statusEl = document.getElementById('saveStatus');
+  statusEl.textContent = 'Saving…';
+
+  try {
+    const response = await fetch('/api/deals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user_id: 'demo-user',
+        address: document.getElementById('price').value ? `$${document.getElementById('price').value} property` : 'Unnamed property',
+        inputs: lastInputs,
+        results: lastMetrics
+      })
+    });
+
+    if (!response.ok) throw new Error('Save failed');
+
+    statusEl.textContent = 'Saved ✓';
+    loadSavedDeals();
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Could not save — try again.';
+  }
+});
+
+async function loadSavedDeals(){
+  const container = document.getElementById('savedDeals');
+  try {
+    const response = await fetch('/api/deals');
+    const { deals } = await response.json();
+
+    if (!deals || deals.length === 0) {
+      container.textContent = 'No saved deals yet.';
+      return;
+    }
+
+    container.innerHTML = deals.map(d => `
+      <div style="padding:10px 0; border-bottom:1px solid rgba(16,27,41,0.1);">
+        <strong>${d.address || 'Unnamed property'}</strong><br>
+        Cap Rate: ${d.results?.capRate !== undefined && d.results.capRate !== null ? d.results.capRate.toFixed(1) + '%' : '—'} ·
+        Cash Flow: ${d.results?.cashFlowMonthly !== undefined && d.results.cashFlowMonthly !== null ? '$' + Math.round(d.results.cashFlowMonthly) : '—'} ·
+        Saved: ${new Date(d.created_at).toLocaleDateString()}
+      </div>
+    `).join('');
+  } catch (err) {
+    console.error(err);
+    container.textContent = 'Could not load saved deals.';
+  }
+}
+
+loadSavedDeals();
 </script>
 
 </body>

@@ -13,7 +13,11 @@ app.use(express.static(__dirname));
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
-
+const { createClient } = require('@supabase/supabase-js');
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_ANON_KEY
+);
 function analyzeDeal(inputs) {
   const price = inputs.price || 0;
   const downPct = inputs.downPct || 20;
@@ -168,7 +172,41 @@ Your summary must:
     res.status(500).json({ error: 'Something went wrong analyzing this deal.' });
   }
 });
+// Save a deal
+app.post('/api/deals', async (req, res) => {
+  try {
+    const { user_id, address, inputs, results } = req.body;
 
+    const { data, error } = await supabase
+      .from('deals')
+      .insert([{ user_id, address, inputs, results }])
+      .select();
+
+    if (error) throw error;
+
+    res.json({ success: true, deal: data[0] });
+} catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Could not save deal.' });
+  }
+});
+
+// Load all saved deals (for now, all of them — we'll filter by user in Week 5)
+app.get('/api/deals', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('deals')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.json({ deals: data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Could not load deals.', details: err.message || err });
+  }
+});
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
