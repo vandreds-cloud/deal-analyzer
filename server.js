@@ -193,11 +193,20 @@ app.post('/api/deals', async (req, res) => {
 
 // Load all saved deals (for now, all of them — we'll filter by user in Week 5)
 app.get('/api/deals', async (req, res) => {
+  res.set('Cache-Control', 'no-store');
   try {
-    const { data, error } = await supabase
+    const { user_id } = req.query;
+
+    let query = supabase
       .from('deals')
       .select('*')
       .order('created_at', { ascending: false });
+
+    if (user_id) {
+      query = query.eq('user_id', user_id);
+    }
+
+    const { data, error } = await query;
 
     if (error) throw error;
 

@@ -4,6 +4,26 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ledger — Rental Deal Analyzer</title>
+<script
+  async
+  crossorigin="anonymous"
+  data-clerk-publishable-key="pk_test_dW5iaWFzZWQtZmVsaW5lLTU5LmNsZXJrLmFjY291bnRzLmRldiQ"
+  src="https://unbiased-feline-59.clerk.accounts.dev/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+  type="text/javascript"
+></script>
+<script
+  defer
+  crossorigin="anonymous"
+  src="https://unbiased-feline-59.clerk.accounts.dev/npm/@clerk/ui@1/dist/ui.browser.js"
+  type="text/javascript">
+</script>
+<script
+  defer
+  crossorigin="anonymous"
+  data-clerk-publishable-key="pk_test_dW5iaWFzZWQtZmVsaW5lLTU5LmNsZXJrLmFjY291bnRzLmRldiQ"
+  src="https://unbiased-feline-59.clerk.accounts.dev/npm/@clerk/clerk-js@6/dist/clerk.browser.js"
+  type="text/javascript">
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -294,7 +314,8 @@
 
 <div class="wrap">
 
-  <div class="masthead">
+ <div class="masthead">
+    <div id="clerk-auth" style="display:flex; justify-content:center; margin-bottom:20px;"></div>
     <div class="eyebrow">Field Ledger · Deal Inspection</div>
     <h1>Rental Deal Analyzer</h1>
     <p>Enter a property's numbers. Get the cash flow, the returns, and a straight verdict on whether it holds up.</p>
@@ -413,6 +434,27 @@
 </div>
 
 <script>
+  let currentUserId = null;
+
+window.addEventListener('load', async function () {
+  await Clerk.load();
+
+  const authDiv = document.getElementById('clerk-auth');
+
+  if (Clerk.user) {
+    currentUserId = Clerk.user.id;
+    Clerk.mountUserButton(authDiv);
+  } else {
+    Clerk.mountSignIn(authDiv);
+  }
+
+  Clerk.addListener(({ user }) => {
+    currentUserId = user ? user.id : null;
+    loadSavedDeals();
+  });
+
+  loadSavedDeals();
+});
   function num(id){
   const v = parseFloat(document.getElementById(id).value);
   return isNaN(v) ? 0 : v;
@@ -515,6 +557,10 @@ let lastInputs = null;
 let lastMetrics = null;
 
 document.getElementById('saveBtn').addEventListener('click', async () => {
+  if (!currentUserId) {
+    alert('Please sign in to save deals.');
+    return;
+  }
   if (!lastInputs || !lastMetrics) {
     alert('Run an analysis first before saving.');
     return;
@@ -528,7 +574,8 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        user_id: 'demo-user',
+
+        user_id: currentUserId,
         address: document.getElementById('price').value ? `$${document.getElementById('price').value} property` : 'Unnamed property',
         inputs: lastInputs,
         results: lastMetrics
@@ -547,8 +594,12 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
 
 async function loadSavedDeals(){
   const container = document.getElementById('savedDeals');
+  if (!currentUserId) {
+    container.textContent = 'Sign in to see your saved deals.';
+    return;
+  }
   try {
-    const response = await fetch('/api/deals');
+    const response = await fetch('/api/deals?user_id=' + encodeURIComponent(currentUserId));
     const { deals } = await response.json();
 
     if (!deals || deals.length === 0) {
