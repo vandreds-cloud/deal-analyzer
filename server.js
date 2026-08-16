@@ -7,7 +7,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+app.use((req, res, next) => {
+  if (req.originalUrl === '/api/webhook') {
+    next();
+  } else {
+    express.json()(req, res, next);
+  }
+});
 app.use(express.static(__dirname));
 
 const anthropic = new Anthropic({
@@ -18,6 +24,9 @@ const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_ANON_KEY
 );
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const REQUIRE_PAYMENT = process.env.REQUIRE_PAYMENT === 'true';
+
 function analyzeDeal(inputs) {
   const price = inputs.price || 0;
   const downPct = inputs.downPct || 20;
@@ -215,6 +224,88 @@ app.get('/api/deals', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'Could not load deals.', details: err.message || err });
   }
+});
+// Create a Stripe Checkout session
+app.post('/api/create-checkout-session', async (req, res) => {
+  try {
+    const { user_id, user_email } = req.body;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      payment_method_types: ['card'],
+      line_items: [{ price: process.env.STRIPE_PRICE_ID, quantity: 1 }],
+      customer_email: user_email,
+      client_reference_id: user_id,
+      success_url: `${req.headers.origin}/?checkout=success`,
+      cancel_url: `${req.headers.origin}/?checkout=cancelled`,
+    });
+
+    res.json({ url: session.url });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Could not start checkout.' });
+  }
+});
+
+// Let the frontend know whether payment is currently required
+app.get('/api/payment-status', (req, res) => {
+  res.json({ requirePayment: REQUIRE_PAYMENT });
+});
+// Check if a specific user has an active subscription
+app.get('/api/subscription-status', async (req, res) => {
+  try {
+    const { user_id } = req.query;
+    if (!user_id) return res.json({ active: false });
+
+    const { data, error } = await supabase
+      .from('subscriptions')
+      .select('status')
+      .eq('user_id', user_id)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    if (error) throw error;
+
+    res.json({ active: !!data });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ active: false });
+  }
+});
+// Stripe webhook — listens for payment confirmations
+app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'];
+  let event;
+
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, process.env.STRIPE_WEBHOOK_SECRET);
+  } catch (err) {
+    console.error('Webhook signature verification failed:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+if (event.type === 'checkout.session.completed') {
+    const session = event.data.object;
+    const user_id = session.client_reference_id;
+    const customer_id = session.customer;
+
+    try {
+      const { data, error } = await supabase
+        .from('subscriptions')
+        .upsert([{ user_id, stripe_customer_id: customer_id, status: 'active' }], { onConflict: 'user_id' })
+        .select();
+
+      if (error) {
+        console.error('Supabase upsert error:', error);
+      } else {
+        console.log('Supabase upsert result:', data);
+      }
+    } catch (err) {
+      console.error('Failed to update subscription:', err);
+    }
+  }
+ 
+
+  res.json({ received: true });
 });
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);

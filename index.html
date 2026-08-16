@@ -314,8 +314,9 @@
 
 <div class="wrap">
 
- <div class="masthead">
-    <div id="clerk-auth" style="display:flex; justify-content:center; margin-bottom:20px;"></div>
+<div class="masthead">
+    <div id="clerk-auth" style="display:flex; justify-content:center; margin-bottom:12px;"></div>
+    <div id="upgradeArea" style="text-align:center; margin-bottom:20px;"></div>
     <div class="eyebrow">Field Ledger · Deal Inspection</div>
     <h1>Rental Deal Analyzer</h1>
     <p>Enter a property's numbers. Get the cash flow, the returns, and a straight verdict on whether it holds up.</p>
@@ -451,10 +452,55 @@ window.addEventListener('load', async function () {
   Clerk.addListener(({ user }) => {
     currentUserId = user ? user.id : null;
     loadSavedDeals();
+    renderUpgradeButton();
   });
 
   loadSavedDeals();
+  renderUpgradeButton();
 });
+
+async function renderUpgradeButton(){
+  const area = document.getElementById('upgradeArea');
+  try {
+    const statusRes = await fetch('/api/payment-status');
+    const { requirePayment } = await statusRes.json();
+
+    if (!requirePayment) {
+      area.innerHTML = '<span style="font-family:\'JetBrains Mono\', monospace; font-size:11px; color:rgba(244,239,226,0.4);">Testing mode — all features free</span>';
+      return;
+    }
+
+    if (!currentUserId) {
+      area.innerHTML = '';
+      return;
+    }
+
+    const subRes = await fetch('/api/subscription-status?user_id=' + encodeURIComponent(currentUserId));
+    const { active } = await subRes.json();
+
+    if (active) {
+      area.innerHTML = '<span style="font-family:\'JetBrains Mono\', monospace; font-size:11px; color:var(--brass-bright);">✓ Pro subscriber</span>';
+      return;
+    }
+
+    area.innerHTML = '<button id="upgradeBtn" style="background:var(--brass); color:var(--ink); border:none; padding:8px 16px; border-radius:3px; font-family:\'JetBrains Mono\', monospace; font-size:12px; cursor:pointer;">Upgrade to Pro — $19/mo</button>';
+
+    document.getElementById('upgradeBtn').addEventListener('click', async () => {
+      const res = await fetch('/api/create-checkout-session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: currentUserId,
+          user_email: Clerk.user?.primaryEmailAddress?.emailAddress || ''
+        })
+      });
+      const { url } = await res.json();
+      if (url) window.location.href = url;
+    });
+  } catch (err) {
+    console.error(err);
+  }
+}
   function num(id){
   const v = parseFloat(document.getElementById(id).value);
   return isNaN(v) ? 0 : v;
