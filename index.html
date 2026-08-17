@@ -420,6 +420,7 @@
       <div class="disclosure">This is a planning tool, not financial or investment advice. Verify all figures — especially rent and comps — before making an offer.</div>
 
       <button class="run" id="saveBtn" style="margin-top:14px; background:var(--brass);">Save this deal</button>
+      <button class="run" id="pdfBtn" style="margin-top:10px; background:var(--ink-3);">Download PDF report</button>
       <div id="saveStatus" style="font-family:'JetBrains Mono', monospace; font-size:12px; margin-top:10px; text-align:center;"></div>
     </div>
 
@@ -636,6 +637,52 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     console.error(err);
     statusEl.textContent = 'Could not save — try again.';
   }
+});
+document.getElementById('pdfBtn').addEventListener('click', async () => {
+  if (!lastInputs || !lastMetrics) {
+    alert('Run an analysis first before downloading a PDF.');
+    return;
+  }
+
+  const btn = document.getElementById('pdfBtn');
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+
+  try {
+    const stampEl = document.getElementById('stamp');
+    const narrativeEl = document.getElementById('narrative');
+
+    const response = await fetch('/api/generate-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        address: document.getElementById('price').value ? `$${document.getElementById('price').value} property` : 'Property',
+        inputs: lastInputs,
+        results: lastMetrics,
+        verdict: { label: stampEl ? stampEl.textContent : '' },
+        narrative: narrativeEl ? narrativeEl.textContent : ''
+      })
+    });
+
+    if (!response.ok) throw new Error('PDF generation failed');
+
+    const blob = await response.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'deal-report.pdf';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+
+  } catch (err) {
+    console.error(err);
+    alert('Could not generate the PDF. Try again.');
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Download PDF report';
 });
 
 async function loadSavedDeals(){
