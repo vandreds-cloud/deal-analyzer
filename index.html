@@ -386,11 +386,20 @@
 
     <div class="section-title">Comps (for valuation check)</div>
     <div class="grid">
+      <div class="field" style="grid-column: 1 / -1;">
+        <label for="lookupAddress">Property address (optional — auto-fills comps below)</label>
+        <input type="text" id="lookupAddress" placeholder="123 Main St, Springfield, IL 62704">
+      </div>
+    </div>
+    <button type="button" id="lookupBtn" style="margin-top:10px; background:var(--ink-3); color:var(--paper); border:none; padding:8px 16px; border-radius:3px; font-family:'JetBrains Mono', monospace; font-size:12px; cursor:pointer;">Look up comps</button>
+    <div id="lookupStatus" style="font-family:'JetBrains Mono', monospace; font-size:12px; margin-top:8px;"></div>
+    <div class="grid" style="margin-top:14px;">
       <div class="field">
         <label for="sqft">Subject property sq ft</label>
         <input type="number" id="sqft" placeholder="1450">
       </div>
     </div>
+
     <div class="grid" style="margin-top:14px;">
       <div class="field comp-row">
         <span class="comp-label">Comp 1</span>
@@ -683,6 +692,44 @@ document.getElementById('pdfBtn').addEventListener('click', async () => {
 
   btn.disabled = false;
   btn.textContent = 'Download PDF report';
+});
+document.getElementById('lookupBtn').addEventListener('click', async () => {
+  const address = document.getElementById('lookupAddress').value.trim();
+  const statusEl = document.getElementById('lookupStatus');
+
+  if (!address) {
+    statusEl.textContent = 'Enter an address first.';
+    return;
+  }
+
+  statusEl.textContent = 'Looking up comps…';
+
+  try {
+    const response = await fetch('/api/comps?address=' + encodeURIComponent(address));
+    if (!response.ok) throw new Error('Lookup failed');
+
+    const { estimatedValue, sqft, comps } = await response.json();
+
+    if (sqft) document.getElementById('sqft').value = sqft;
+
+    if (comps && comps.length > 0) {
+      const ids = [['c1p','c1s'], ['c2p','c2s'], ['c3p','c3s']];
+      comps.forEach((c, i) => {
+        if (ids[i]) {
+          document.getElementById(ids[i][0]).value = c.price || '';
+          document.getElementById(ids[i][1]).value = c.sqft || '';
+        }
+      });
+    }
+
+    statusEl.textContent = estimatedValue
+      ? `Done — estimated market value: $${Math.round(estimatedValue).toLocaleString()}`
+      : 'Done — comps filled in below.';
+
+  } catch (err) {
+    console.error(err);
+    statusEl.textContent = 'Could not look up comps for that address.';
+  }
 });
 
 async function loadSavedDeals(){

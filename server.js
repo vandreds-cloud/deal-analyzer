@@ -27,6 +27,7 @@ const supabase = createClient(
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const puppeteer = require('puppeteer');
+const RENTCAST_API_KEY = process.env.RENTCAST_API_KEY;
 const REQUIRE_PAYMENT = process.env.REQUIRE_PAYMENT === 'true';
 
 function analyzeDeal(inputs) {
@@ -358,6 +359,44 @@ app.post('/api/generate-pdf', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Could not generate PDF.' });
+  }
+});
+
+// Look up comps and estimated value for an address using RentCast
+app.get('/api/comps', async (req, res) => {
+  try {
+    const { address } = req.query;
+    if (!address) return res.status(400).json({ error: 'Address is required.' });
+
+    const response = await fetch(
+      `https://api.rentcast.io/v1/avm/value?address=${encodeURIComponent(address)}&compCount=3`,
+      {
+        headers: { 'X-Api-Key': RENTCAST_API_KEY }
+      }
+    );
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('RentCast error:', errText);
+      return res.status(response.status).json({ error: 'Could not fetch comps for this address.' });
+    }
+
+    const data = await response.json();
+
+    const comps = (data.comparables || []).slice(0, 3).map(c => ({
+      price: c.price || 0,
+      sqft: c.squareFootage || 0
+    }));
+
+    res.json({
+      estimatedValue: data.price || null,
+      sqft: data.subjectProperty?.squareFootage || null,
+      comps
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Comps lookup failed.' });
   }
 });
 app.listen(PORT, () => {
