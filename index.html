@@ -599,6 +599,7 @@ document.getElementById('runBtn').addEventListener('click', async () => {
 
     lastInputs = inputs;
     lastMetrics = metrics;
+    lastNarrative = narrative;
 
   } catch (err) {
     console.error(err);
@@ -611,6 +612,7 @@ document.getElementById('runBtn').addEventListener('click', async () => {
 });
 let lastInputs = null;
 let lastMetrics = null;
+let lastNarrative = null;
 
 document.getElementById('saveBtn').addEventListener('click', async () => {
   if (!currentUserId) {
@@ -622,19 +624,20 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
     return;
   }
 
-  const statusEl = document.getElementById('saveStatus');
+ const statusEl = document.getElementById('saveStatus');
   statusEl.textContent = 'Saving…';
+ 
 
   try {
     const response = await fetch('/api/deals', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-
+     body: JSON.stringify({
         user_id: currentUserId,
         address: document.getElementById('price').value ? `$${document.getElementById('price').value} property` : 'Unnamed property',
         inputs: lastInputs,
-        results: lastMetrics
+        results: lastMetrics,
+        narrative: lastNarrative
       })
     });
 
@@ -664,12 +667,12 @@ document.getElementById('pdfBtn').addEventListener('click', async () => {
     const response = await fetch('/api/generate-pdf', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        address: document.getElementById('price').value ? `$${document.getElementById('price').value} property` : 'Property',
+    body: JSON.stringify({
+        user_id: currentUserId,
+        address: document.getElementById('price').value ? `$${document.getElementById('price').value} property` : 'Unnamed property',
         inputs: lastInputs,
         results: lastMetrics,
-        verdict: { label: stampEl ? stampEl.textContent : '' },
-        narrative: narrativeEl ? narrativeEl.textContent : ''
+        narrative: document.getElementById('narrative').textContent
       })
     });
 
@@ -705,10 +708,14 @@ document.getElementById('lookupBtn').addEventListener('click', async () => {
   statusEl.textContent = 'Looking up comps…';
 
   try {
-    const response = await fetch('/api/comps?address=' + encodeURIComponent(address));
-    if (!response.ok) throw new Error('Lookup failed');
+    const response = await fetch('/api/comps?address=' + encodeURIComponent(address) + '&user_id=' + encodeURIComponent(currentUserId || ''));
+   if (response.status === 429) {
+      const { error } = await response.json();
+      statusEl.textContent = error;
+      return;
+    }
 
-    const { estimatedValue, sqft, comps } = await response.json();
+    const { estimatedValue, sqft, comps, remainingLookups } = await response.json();
 
     if (sqft) document.getElementById('sqft').value = sqft;
 
@@ -722,9 +729,9 @@ document.getElementById('lookupBtn').addEventListener('click', async () => {
       });
     }
 
-    statusEl.textContent = estimatedValue
+   statusEl.textContent = (estimatedValue
       ? `Done — estimated market value: $${Math.round(estimatedValue).toLocaleString()}`
-      : 'Done — comps filled in below.';
+      : 'Done — comps filled in below.') + ` (${remainingLookups} lookups left this month)`;
 
   } catch (err) {
     console.error(err);
@@ -747,14 +754,23 @@ async function loadSavedDeals(){
       return;
     }
 
-    container.innerHTML = deals.map(d => `
-      <div style="padding:10px 0; border-bottom:1px solid rgba(16,27,41,0.1);">
+   container.innerHTML = deals.map((d, i) => `
+      <div class="savedDealRow" data-index="${i}" style="padding:10px 0; border-bottom:1px solid rgba(16,27,41,0.1); cursor:pointer;">
         <strong>${d.address || 'Unnamed property'}</strong><br>
         Cap Rate: ${d.results?.capRate !== undefined && d.results.capRate !== null ? d.results.capRate.toFixed(1) + '%' : '—'} ·
         Cash Flow: ${d.results?.cashFlowMonthly !== undefined && d.results.cashFlowMonthly !== null ? '$' + Math.round(d.results.cashFlowMonthly) : '—'} ·
         Saved: ${new Date(d.created_at).toLocaleDateString()}
       </div>
     `).join('');
+
+    window.savedDealsCache = deals;
+
+    document.querySelectorAll('.savedDealRow').forEach(row => {
+      row.addEventListener('click', () => {
+        const deal = window.savedDealsCache[row.dataset.index];
+        viewSavedDeal(deal);
+      });
+    });
   } catch (err) {
     console.error(err);
     container.textContent = 'Could not load saved deals.';
@@ -762,6 +778,59 @@ async function loadSavedDeals(){
 }
 
 loadSavedDeals();
+
+function viewSavedDeal(deal){
+  const inputs = deal.inputs || {};
+
+  const fieldMap = {
+    price: 'price', downPct: 'downpct', rate: 'rate', termYears: 'term',
+    closing: 'closing', rehab: 'rehab', rent: 'rent', vacancyPct: 'vacancy',
+    annualTaxes: 'taxes', annualInsurance: 'insurance', hoaMonthly: 'hoa',
+    mgmtPct: 'mgmt', maintPct: 'maint', sqft: 'sqft'
+  };
+
+  Object.entries(fieldMap).forEach(([key, id]) => {
+    const el = document.getElementById(id);
+    if (el && inputs[key] !== undefined && inputs[key] !== null) el.value = inputs[key];
+  });
+
+  if (inputs.comps && Array.isArray(inputs.comps)) {
+    const compIds = [['c1p','c1s'], ['c2p','c2s'], ['c3p','c3s']];
+    inputs.comps.forEach((c, i) => {
+      if (compIds[i]) {
+        document.getElementById(compIds[i][0]).value = c.price || '';
+        document.getElementById(compIds[i][1]).value = c.sqft || '';
+      }
+    });
+  }
+
+  const m = deal.results;
+
+  const stampEl = document.getElementById('stamp');
+  const scoreVerdict = (() => {
+    let score = 0;
+    if (m.cashFlowMonthly > 0) score++; else score--;
+    if (m.capRate >= 6) score++; else if (m.capRate < 4) score--;
+    if (m.cashOnCash >= 8) score++; else if (m.cashOnCash < 4) score--;
+    if (m.dscr !== null) { if (m.dscr >= 1.2) score++; else if (m.dscr < 1.0) score -= 2; }
+    if (score >= 3) return {label:'Clear to Proceed', cls:'green'};
+    if (score >= 0) return {label:'Proceed with Caution', cls:'amber'};
+    return {label:'Do Not Proceed', cls:'red'};
+  })();
+
+  stampEl.textContent = scoreVerdict.label;
+  stampEl.className = 'stamp ' + scoreVerdict.cls;
+
+  document.getElementById('metrics').innerHTML = renderMetrics(m);
+  document.getElementById('narrative').textContent = deal.narrative || '(No saved narrative for this older entry.)';
+  document.getElementById('results').classList.add('show');
+
+  lastInputs = deal.inputs;
+  lastMetrics = deal.results;
+  lastNarrative = deal.narrative;
+
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
 </script>
 
 </body>

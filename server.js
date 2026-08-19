@@ -187,17 +187,29 @@ Your summary must:
 // Save a deal
 app.post('/api/deals', async (req, res) => {
   try {
-    const { user_id, address, inputs, results } = req.body;
+    const { user_id, address, inputs, results, narrative } = req.body;
 
     const { data, error } = await supabase
       .from('deals')
-      .insert([{ user_id, address, inputs, results }])
+      .insert([{ user_id, address, inputs, results, narrative }])
       .select();
 
     if (error) throw error;
 
+    // Enforce a cap of 25 saved deals per user — delete oldest beyond that
+    const { data: allDeals } = await supabase
+      .from('deals')
+      .select('id, created_at')
+      .eq('user_id', user_id)
+      .order('created_at', { ascending: false });
+
+    if (allDeals && allDeals.length > 25) {
+      const idsToDelete = allDeals.slice(25).map(d => d.id);
+      await supabase.from('deals').delete().in('id', idsToDelete);
+    }
+
     res.json({ success: true, deal: data[0] });
-} catch (err) {
+  } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Could not save deal.' });
   }
@@ -363,10 +375,28 @@ app.post('/api/generate-pdf', async (req, res) => {
 });
 
 // Look up comps and estimated value for an address using RentCast
+const COMPS_MONTHLY_LIMIT = 15;
+
 app.get('/api/comps', async (req, res) => {
   try {
-    const { address } = req.query;
+    const { address, user_id } = req.query;
     if (!address) return res.status(400).json({ error: 'Address is required.' });
+    if (!user_id) return res.status(400).json({ error: 'Sign in required for comps lookup.' });
+
+    const month = new Date().toISOString().slice(0, 7);
+
+    const { data: usage } = await supabase
+      .from('usage_tracking')
+      .select('comps_count')
+      .eq('user_id', user_id)
+      .eq('month', month)
+      .maybeSingle();
+
+    const currentCount = usage?.comps_count || 0;
+
+    if (currentCount >= COMPS_MONTHLY_LIMIT) {
+      return res.status(429).json({ error: `Monthly comps lookup limit (${COMPS_MONTHLY_LIMIT}) reached. Resets next month.` });
+    }
 
     const response = await fetch(
       `https://api.rentcast.io/v1/avm/value?address=${encodeURIComponent(address)}&compCount=3`,
@@ -388,10 +418,15 @@ app.get('/api/comps', async (req, res) => {
       sqft: c.squareFootage || 0
     }));
 
+    await supabase
+      .from('usage_tracking')
+      .upsert([{ user_id, month, comps_count: currentCount + 1 }], { onConflict: 'user_id,month' });
+
     res.json({
       estimatedValue: data.price || null,
       sqft: data.subjectProperty?.squareFootage || null,
-      comps
+      comps,
+      remainingLookups: COMPS_MONTHLY_LIMIT - (currentCount + 1)
     });
 
   } catch (err) {
@@ -399,6 +434,8 @@ app.get('/api/comps', async (req, res) => {
     res.status(500).json({ error: 'Comps lookup failed.' });
   }
 });
+
+  
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
