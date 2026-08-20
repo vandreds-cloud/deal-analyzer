@@ -31,7 +31,7 @@ const RENTCAST_API_KEY = process.env.RENTCAST_API_KEY;
 const NON_DISCLOSURE_STATES = ['AK','ID','KS','LA','MS','MO','MT','NM','ND','SD','TX','UT','WY'];
 
 function checkNonDisclosure(address) {
-  const match = address.match(/,\s*([A-Z]{2})\s*\d{0,5}\s*$/i);
+  const match = address.match(/\b([A-Z]{2})\b\s*\d{0,5}\s*$/i);
   if (!match) return null;
   const state = match[1].toUpperCase();
   return NON_DISCLOSURE_STATES.includes(state) ? state : null;
@@ -451,11 +451,15 @@ app.get('/api/comps', async (req, res) => {
 }
 app.post('/api/mao', (req, res) => {
   try {
-    const { targetCashOnCash, targetDSCR, ...base } = req.body;
+   const { targetCashOnCash, targetDSCR, ...base } = req.body;
 
     if (!targetCashOnCash && !targetDSCR) {
       return res.status(400).json({ error: 'Provide at least a target cash-on-cash return or DSCR.' });
     }
+    if (!base.rent || base.rent <= 0) {
+      return res.status(400).json({ error: 'Enter monthly rent before calculating a max offer.' });
+    }
+    
 
     let low = 10000, high = 5000000;
     for (let i = 0; i < 40; i++) {
@@ -474,7 +478,7 @@ app.post('/api/mao', (req, res) => {
 
     const returnBasedMax = Math.round(low);
     const finalMetrics = metricsAtPrice(returnBasedMax, base);
-    const marketValueEstimate = finalMetrics.estimatedValue ? Math.round(finalMetrics.estimatedValue) : null;
+    const marketValueEstimate = req.body.rentcastEstimatedValue || null;
 
     let trueMaxOffer = returnBasedMax;
     let bindingConstraint = 'return target';

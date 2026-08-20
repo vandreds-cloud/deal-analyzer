@@ -738,8 +738,9 @@ document.getElementById('metrics').innerHTML = renderMetrics(metrics);
         return;
       }
 
-      const { estimatedValue, sqft, comps, remainingLookups } = await response.json();
-
+      const { estimatedValue, sqft, comps, remainingLookups, nonDisclosureState } = await response.json();
+      window.lastEstimatedValue = estimatedValue;
+      window.lastNonDisclosureState = nonDisclosureState;
       if (sqft) document.getElementById('sqft').value = sqft;
 
       if (comps && comps.length > 0) {
@@ -752,9 +753,15 @@ document.getElementById('metrics').innerHTML = renderMetrics(metrics);
         });
       }
 
-      statusEl.textContent = (estimatedValue
+      let statusMsg = (estimatedValue
         ? `Done — estimated market value: $${Math.round(estimatedValue).toLocaleString()}`
         : 'Done — comps filled in below.') + ` (${remainingLookups} lookups left this month)`;
+
+      if (nonDisclosureState) {
+        statusMsg += ` ⚠️ ${nonDisclosureState} is a non-disclosure state — rental metrics are verified, but always cross-reference equity/value against local MLS data.`;
+      }
+
+      statusEl.textContent = statusMsg;
 
     } catch (err) {
       console.error(err);
@@ -771,10 +778,15 @@ document.getElementById('metrics').innerHTML = renderMetrics(metrics);
       resultEl.textContent = 'Enter a target cash-on-cash return or DSCR first.';
       return;
     }
+if (num('rent') <= 0) {
+      resultEl.textContent = 'Enter monthly rent before calculating a max offer.';
+      return;
+    }
 
     resultEl.textContent = 'Calculating…';
 
     const base = {
+    
       downPct: num('downpct'), rate: num('rate'), termYears: num('term'),
       closing: num('closing'), rehab: num('rehab'), rent: num('rent'),
       vacancyPct: num('vacancy'), annualTaxes: num('taxes'), annualInsurance: num('insurance'),
@@ -791,7 +803,7 @@ document.getElementById('metrics').innerHTML = renderMetrics(metrics);
       const response = await fetch('/api/mao', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ targetCashOnCash: targetCoC, targetDSCR, ...base })
+        body: JSON.stringify({ targetCashOnCash: targetCoC, targetDSCR, rentcastEstimatedValue: window.lastEstimatedValue || null, ...base })
       });
 
       if (!response.ok) throw new Error('MAO calculation failed');
