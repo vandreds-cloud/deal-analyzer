@@ -28,6 +28,14 @@ const supabase = createClient(
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const puppeteer = require('puppeteer');
 const RENTCAST_API_KEY = process.env.RENTCAST_API_KEY;
+const NON_DISCLOSURE_STATES = ['AK','ID','KS','LA','MS','MO','MT','NM','ND','SD','TX','UT','WY'];
+
+function checkNonDisclosure(address) {
+  const match = address.match(/,\s*([A-Z]{2})\s*\d{0,5}\s*$/i);
+  if (!match) return null;
+  const state = match[1].toUpperCase();
+  return NON_DISCLOSURE_STATES.includes(state) ? state : null;
+}
 const REQUIRE_PAYMENT = process.env.REQUIRE_PAYMENT === 'true';
 
 function analyzeDeal(inputs) {
@@ -422,11 +430,14 @@ app.get('/api/comps', async (req, res) => {
       .from('usage_tracking')
       .upsert([{ user_id, month, comps_count: currentCount + 1 }], { onConflict: 'user_id,month' });
 
+    const nonDisclosureState = checkNonDisclosure(address);
+
     res.json({
       estimatedValue: data.price || null,
       sqft: data.subjectProperty?.squareFootage || null,
       comps,
-      remainingLookups: COMPS_MONTHLY_LIMIT - (currentCount + 1)
+      remainingLookups: COMPS_MONTHLY_LIMIT - (currentCount + 1),
+      nonDisclosureState
     });
 
   } catch (err) {
@@ -435,7 +446,56 @@ app.get('/api/comps', async (req, res) => {
   }
 });
 
-  
+ function metricsAtPrice(price, base) {
+  return analyzeDeal({ ...base, price });
+}
+app.post('/api/mao', (req, res) => {
+  try {
+    const { targetCashOnCash, targetDSCR, ...base } = req.body;
+
+    if (!targetCashOnCash && !targetDSCR) {
+      return res.status(400).json({ error: 'Provide at least a target cash-on-cash return or DSCR.' });
+    }
+
+    let low = 10000, high = 5000000;
+    for (let i = 0; i < 40; i++) {
+      const mid = (low + high) / 2;
+      const m = metricsAtPrice(mid, base);
+
+      const cocOk = !targetCashOnCash || (m.cashOnCash !== null && m.cashOnCash >= targetCashOnCash);
+      const dscrOk = !targetDSCR || (m.dscr !== null && m.dscr >= targetDSCR);
+
+      if (cocOk && dscrOk) {
+        low = mid;
+      } else {
+        high = mid;
+      }
+    }
+
+    const returnBasedMax = Math.round(low);
+    const finalMetrics = metricsAtPrice(returnBasedMax, base);
+    const marketValueEstimate = finalMetrics.estimatedValue ? Math.round(finalMetrics.estimatedValue) : null;
+
+    let trueMaxOffer = returnBasedMax;
+    let bindingConstraint = 'return target';
+
+    if (marketValueEstimate && marketValueEstimate < returnBasedMax) {
+      trueMaxOffer = marketValueEstimate;
+      bindingConstraint = 'comps / market value';
+    }
+
+    res.json({
+      maxOffer: trueMaxOffer,
+      returnBasedMax,
+      marketValueEstimate,
+      bindingConstraint,
+      metricsAtMaxOffer: finalMetrics
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Could not calculate maximum offer.' });
+  }
+});
 app.listen(PORT, () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });

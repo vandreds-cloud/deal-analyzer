@@ -407,7 +407,6 @@
         <div class="sub"><label>Sq ft</label><input type="number" id="c1s" placeholder="1480"></div>
       </div>
       <div class="field comp-row">
-    
         <span class="comp-label">Comp 2</span>
         <div class="sub"><label>Sale price ($)</label><input type="number" id="c2p" placeholder="275000"></div>
         <div class="sub"><label>Sq ft</label><input type="number" id="c2s" placeholder="1390"></div>
@@ -419,10 +418,25 @@
       </div>
     </div>
 
+    <div class="section-title">Maximum Allowed Offer (optional)</div>
+    <div class="grid">
+      <div class="field">
+        <label for="targetCoC">Target cash-on-cash return (%)</label>
+        <input type="number" id="targetCoC" placeholder="10">
+      </div>
+      <div class="field">
+        <label for="targetDSCR">Target DSCR</label>
+        <input type="number" step="0.01" id="targetDSCR" placeholder="1.3">
+      </div>
+    </div>
+    <button type="button" id="maoBtn" style="margin-top:10px; background:var(--ink-3); color:var(--paper); border:none; padding:8px 16px; border-radius:3px; font-family:'JetBrains Mono', monospace; font-size:12px; cursor:pointer;">Calculate max offer</button>
+    <div id="maoResult" style="font-family:'JetBrains Mono', monospace; font-size:13px; margin-top:10px;"></div>
+
     <button class="run" id="runBtn">Run the analysis</button>
 
     <div class="results" id="results">
       <div class="stamp-wrap"><div class="stamp" id="stamp">—</div></div>
+      <div id="maoCompare" style="text-align:center; font-family:'JetBrains Mono', monospace; font-size:13px; margin-bottom:10px; display:none;"></div>
       <div class="metrics" id="metrics"></div>
       <div class="section-title">Field Notes</div>
       <div class="narrative" id="narrative"><span class="loading">Drafting summary…</span></div>
@@ -438,399 +452,463 @@
 
   </div>
 
-  </div>
-
   <div class="footer-note">© 2026 Deal Ledger. For planning purposes only — not financial advice.</div>
 
 </div>
 
 <script>
   let currentUserId = null;
+  let lastInputs = null;
+  let lastMetrics = null;
+  let lastNarrative = null;
 
-window.addEventListener('load', async function () {
-  await Clerk.load();
+  window.addEventListener('load', async function () {
+    await Clerk.load();
 
-  const authDiv = document.getElementById('clerk-auth');
+    const authDiv = document.getElementById('clerk-auth');
 
-  if (Clerk.user) {
-    currentUserId = Clerk.user.id;
-    Clerk.mountUserButton(authDiv);
-  } else {
-    Clerk.mountSignIn(authDiv);
-  }
+    if (Clerk.user) {
+      currentUserId = Clerk.user.id;
+      Clerk.mountUserButton(authDiv);
+    } else {
+      Clerk.mountSignIn(authDiv);
+    }
 
-  Clerk.addListener(({ user }) => {
-    currentUserId = user ? user.id : null;
+    Clerk.addListener(({ user }) => {
+      currentUserId = user ? user.id : null;
+      loadSavedDeals();
+      renderUpgradeButton();
+    });
+
     loadSavedDeals();
     renderUpgradeButton();
   });
 
-  loadSavedDeals();
-  renderUpgradeButton();
-});
+  async function renderUpgradeButton(){
+    const area = document.getElementById('upgradeArea');
+    try {
+      const statusRes = await fetch('/api/payment-status');
+      const { requirePayment } = await statusRes.json();
 
-async function renderUpgradeButton(){
-  const area = document.getElementById('upgradeArea');
-  try {
-    const statusRes = await fetch('/api/payment-status');
-    const { requirePayment } = await statusRes.json();
+      if (!requirePayment) {
+        area.innerHTML = '<span style="font-family:\'JetBrains Mono\', monospace; font-size:11px; color:rgba(244,239,226,0.4);">Testing mode — all features free</span>';
+        return;
+      }
 
-    if (!requirePayment) {
-      area.innerHTML = '<span style="font-family:\'JetBrains Mono\', monospace; font-size:11px; color:rgba(244,239,226,0.4);">Testing mode — all features free</span>';
+      if (!currentUserId) {
+        area.innerHTML = '';
+        return;
+      }
+
+      const subRes = await fetch('/api/subscription-status?user_id=' + encodeURIComponent(currentUserId));
+      const { active } = await subRes.json();
+
+      if (active) {
+        area.innerHTML = '<span style="font-family:\'JetBrains Mono\', monospace; font-size:11px; color:var(--brass-bright);">✓ Pro subscriber</span>';
+        return;
+      }
+
+      area.innerHTML = '<button id="upgradeBtn" style="background:var(--brass); color:var(--ink); border:none; padding:8px 16px; border-radius:3px; font-family:\'JetBrains Mono\', monospace; font-size:12px; cursor:pointer;">Upgrade to Pro — $19/mo</button>';
+
+      document.getElementById('upgradeBtn').addEventListener('click', async () => {
+        const res = await fetch('/api/create-checkout-session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: currentUserId,
+            user_email: Clerk.user?.primaryEmailAddress?.emailAddress || ''
+          })
+        });
+        const { url } = await res.json();
+        if (url) window.location.href = url;
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  function num(id){
+    const v = parseFloat(document.getElementById(id).value);
+    return isNaN(v) ? 0 : v;
+  }
+
+  function fmtMoney(n){
+    if (n === null || n === undefined || !isFinite(n)) return '—';
+    const sign = n < 0 ? '-' : '';
+    return sign + '$' + Math.abs(Math.round(n)).toLocaleString();
+  }
+
+  function fmtPct(n){
+    if (n === null || n === undefined || !isFinite(n)) return '—';
+    return n.toFixed(1) + '%';
+  }
+
+  function renderMetrics(m){
+    const cells = [
+      ['Monthly Cash Flow', fmtMoney(m.cashFlowMonthly), m.cashFlowMonthly !== null && m.cashFlowMonthly < 0],
+      ['Cap Rate', fmtPct(m.capRate), m.capRate !== null && m.capRate < 4],
+      ['Cash-on-Cash Return', fmtPct(m.cashOnCash), m.cashOnCash !== null && m.cashOnCash < 4],
+      ['DSCR', m.dscr !== null && m.dscr !== undefined ? m.dscr.toFixed(2) : '—', m.dscr !== null && m.dscr < 1.0],
+      ['Monthly NOI', fmtMoney(m.noiMonthly), false],
+      ['Break-even Occupancy', fmtPct(m.breakEvenOccupancy), m.breakEvenOccupancy !== null && m.breakEvenOccupancy > 90],
+      ['Total Cash Invested', fmtMoney(m.totalCashInvested), false],
+      ['Monthly P&I Payment', fmtMoney(m.monthlyPI), false],
+      ['Value vs. Comps', m.valueDeltaPct !== null && m.valueDeltaPct !== undefined ? (m.valueDeltaPct > 0 ? '+' : '') + m.valueDeltaPct.toFixed(1) + '%' : '—', m.valueDeltaPct !== null && m.valueDeltaPct > 8],
+    ];
+    return cells.map(([lbl, val, flag]) =>
+      `<div class="metric"><div class="val${flag ? ' flag' : ''}">${val}</div><div class="lbl">${lbl}</div></div>`
+    ).join('');
+  }
+
+  document.getElementById('runBtn').addEventListener('click', async () => {
+    const inputs = {
+      price: num('price'),
+      downPct: num('downpct'),
+      rate: num('rate'),
+      termYears: num('term'),
+      closing: num('closing'),
+      rehab: num('rehab'),
+      rent: num('rent'),
+      vacancyPct: num('vacancy'),
+      annualTaxes: num('taxes'),
+      annualInsurance: num('insurance'),
+      hoaMonthly: num('hoa'),
+      mgmtPct: num('mgmt'),
+      maintPct: num('maint'),
+      sqft: num('sqft'),
+      comps: [
+        { price: num('c1p'), sqft: num('c1s') },
+        { price: num('c2p'), sqft: num('c2s') },
+        { price: num('c3p'), sqft: num('c3s') },
+      ]
+    };
+
+    if (inputs.price <= 0 || inputs.rent <= 0) {
+      alert('Enter at least a purchase price and monthly rent to run the analysis.');
       return;
     }
 
+    const btn = document.getElementById('runBtn');
+    btn.disabled = true;
+    btn.textContent = 'Calculating…';
+
+    document.getElementById('results').classList.add('show');
+    document.getElementById('narrative').innerHTML = '<span class="loading">Drafting summary…</span>';
+
+    try {
+      const response = await fetch('/api/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(inputs)
+      });
+
+      if (!response.ok) throw new Error('Server error');
+
+      const { metrics, verdict, narrative } = await response.json();
+
+      const stampEl = document.getElementById('stamp');
+      stampEl.textContent = verdict.label;
+      stampEl.className = 'stamp ' + verdict.cls;
+
+document.getElementById('metrics').innerHTML = renderMetrics(metrics);
+      document.getElementById('narrative').textContent = narrative;
+
+      const maoNoteEl = document.getElementById('maoCompare');
+      if (window.lastMaoResult && inputs.price) {
+        const diff = inputs.price - window.lastMaoResult.maxOffer;
+        const overUnder = diff > 0 ? 'ABOVE' : 'below';
+        const color = diff > 0 ? 'var(--red)' : 'var(--green)';
+        maoNoteEl.innerHTML = `<strong style="color:${color};">Your offer ($${inputs.price.toLocaleString()}) is $${Math.abs(Math.round(diff)).toLocaleString()} ${overUnder} your calculated max offer ($${window.lastMaoResult.maxOffer.toLocaleString()}).</strong>`;
+        maoNoteEl.style.display = 'block';
+      } else {
+        maoNoteEl.style.display = 'none';
+      }
+
+      lastInputs = inputs;
+      lastMetrics = metrics;
+      lastNarrative = narrative;
+
+    } catch (err) {
+      console.error(err);
+      document.getElementById('narrative').textContent =
+        'Something went wrong reaching the server. Make sure server.js is running, then try again.';
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Run the analysis';
+  });
+
+  document.getElementById('saveBtn').addEventListener('click', async () => {
     if (!currentUserId) {
-      area.innerHTML = '';
+      alert('Please sign in to save deals.');
+      return;
+    }
+    if (!lastInputs || !lastMetrics) {
+      alert('Run an analysis first before saving.');
       return;
     }
 
-    const subRes = await fetch('/api/subscription-status?user_id=' + encodeURIComponent(currentUserId));
-    const { active } = await subRes.json();
+    const statusEl = document.getElementById('saveStatus');
+    statusEl.textContent = 'Saving…';
 
-    if (active) {
-      area.innerHTML = '<span style="font-family:\'JetBrains Mono\', monospace; font-size:11px; color:var(--brass-bright);">✓ Pro subscriber</span>';
-      return;
-    }
-
-    area.innerHTML = '<button id="upgradeBtn" style="background:var(--brass); color:var(--ink); border:none; padding:8px 16px; border-radius:3px; font-family:\'JetBrains Mono\', monospace; font-size:12px; cursor:pointer;">Upgrade to Pro — $19/mo</button>';
-
-    document.getElementById('upgradeBtn').addEventListener('click', async () => {
-      const res = await fetch('/api/create-checkout-session', {
+    try {
+      const response = await fetch('/api/deals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           user_id: currentUserId,
-          user_email: Clerk.user?.primaryEmailAddress?.emailAddress || ''
+          address: document.getElementById('price').value ? `$${document.getElementById('price').value} property` : 'Unnamed property',
+          inputs: lastInputs,
+          results: lastMetrics,
+          narrative: lastNarrative
         })
       });
-      const { url } = await res.json();
-      if (url) window.location.href = url;
-    });
-  } catch (err) {
-    console.error(err);
-  }
-}
-  function num(id){
-  const v = parseFloat(document.getElementById(id).value);
-  return isNaN(v) ? 0 : v;
-}
 
-function fmtMoney(n){
-  if (n === null || n === undefined || !isFinite(n)) return '—';
-  const sign = n < 0 ? '-' : '';
-  return sign + '$' + Math.abs(Math.round(n)).toLocaleString();
-}
+      if (!response.ok) throw new Error('Save failed');
 
-function fmtPct(n){
-  if (n === null || n === undefined || !isFinite(n)) return '—';
-  return n.toFixed(1) + '%';
-}
+      statusEl.textContent = 'Saved ✓';
+      loadSavedDeals();
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = 'Could not save — try again.';
+    }
+  });
 
-function renderMetrics(m){
-  const cells = [
-    ['Monthly Cash Flow', fmtMoney(m.cashFlowMonthly), m.cashFlowMonthly !== null && m.cashFlowMonthly < 0],
-    ['Cap Rate', fmtPct(m.capRate), m.capRate !== null && m.capRate < 4],
-    ['Cash-on-Cash Return', fmtPct(m.cashOnCash), m.cashOnCash !== null && m.cashOnCash < 4],
-    ['DSCR', m.dscr !== null && m.dscr !== undefined ? m.dscr.toFixed(2) : '—', m.dscr !== null && m.dscr < 1.0],
-    ['Monthly NOI', fmtMoney(m.noiMonthly), false],
-    ['Break-even Occupancy', fmtPct(m.breakEvenOccupancy), m.breakEvenOccupancy !== null && m.breakEvenOccupancy > 90],
-    ['Total Cash Invested', fmtMoney(m.totalCashInvested), false],
-    ['Monthly P&I Payment', fmtMoney(m.monthlyPI), false],
-    ['Value vs. Comps', m.valueDeltaPct !== null && m.valueDeltaPct !== undefined ? (m.valueDeltaPct > 0 ? '+' : '') + m.valueDeltaPct.toFixed(1) + '%' : '—', m.valueDeltaPct !== null && m.valueDeltaPct > 8],
-  ];
-  return cells.map(([lbl, val, flag]) =>
-    `<div class="metric"><div class="val${flag ? ' flag' : ''}">${val}</div><div class="lbl">${lbl}</div></div>`
-  ).join('');
-}
-
-document.getElementById('runBtn').addEventListener('click', async () => {
-  const inputs = {
-    price: num('price'),
-    downPct: num('downpct'),
-    rate: num('rate'),
-    termYears: num('term'),
-    closing: num('closing'),
-    rehab: num('rehab'),
-    rent: num('rent'),
-    vacancyPct: num('vacancy'),
-    annualTaxes: num('taxes'),
-    annualInsurance: num('insurance'),
-    hoaMonthly: num('hoa'),
-    mgmtPct: num('mgmt'),
-    maintPct: num('maint'),
-    sqft: num('sqft'),
-    comps: [
-      { price: num('c1p'), sqft: num('c1s') },
-      { price: num('c2p'), sqft: num('c2s') },
-      { price: num('c3p'), sqft: num('c3s') },
-    ]
-  };
-
-  if (inputs.price <= 0 || inputs.rent <= 0) {
-    alert('Enter at least a purchase price and monthly rent to run the analysis.');
-    return;
-  }
-
-  const btn = document.getElementById('runBtn');
-  btn.disabled = true;
-  btn.textContent = 'Calculating…';
-
-  document.getElementById('results').classList.add('show');
-  document.getElementById('narrative').innerHTML = '<span class="loading">Drafting summary…</span>';
-
-  try {
-    const response = await fetch('/api/analyze', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(inputs)
-    });
-
-    if (!response.ok) throw new Error('Server error');
-
-    const { metrics, verdict, narrative } = await response.json();
-
-    const stampEl = document.getElementById('stamp');
-    stampEl.textContent = verdict.label;
-    stampEl.className = 'stamp ' + verdict.cls;
-
-    document.getElementById('metrics').innerHTML = renderMetrics(metrics);
-    document.getElementById('narrative').textContent = narrative;
-
-    lastInputs = inputs;
-    lastMetrics = metrics;
-    lastNarrative = narrative;
-
-  } catch (err) {
-    console.error(err);
-    document.getElementById('narrative').textContent =
-      'Something went wrong reaching the server. Make sure server.js is running, then try again.';
-  }
-
-  btn.disabled = false;
-  btn.textContent = 'Run the analysis';
-});
-let lastInputs = null;
-let lastMetrics = null;
-let lastNarrative = null;
-
-document.getElementById('saveBtn').addEventListener('click', async () => {
-  if (!currentUserId) {
-    alert('Please sign in to save deals.');
-    return;
-  }
-  if (!lastInputs || !lastMetrics) {
-    alert('Run an analysis first before saving.');
-    return;
-  }
-
- const statusEl = document.getElementById('saveStatus');
-  statusEl.textContent = 'Saving…';
- 
-
-  try {
-    const response = await fetch('/api/deals', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-     body: JSON.stringify({
-        user_id: currentUserId,
-        address: document.getElementById('price').value ? `$${document.getElementById('price').value} property` : 'Unnamed property',
-        inputs: lastInputs,
-        results: lastMetrics,
-        narrative: lastNarrative
-      })
-    });
-
-    if (!response.ok) throw new Error('Save failed');
-
-    statusEl.textContent = 'Saved ✓';
-    loadSavedDeals();
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = 'Could not save — try again.';
-  }
-});
-document.getElementById('pdfBtn').addEventListener('click', async () => {
-  if (!lastInputs || !lastMetrics) {
-    alert('Run an analysis first before downloading a PDF.');
-    return;
-  }
-
-  const btn = document.getElementById('pdfBtn');
-  btn.disabled = true;
-  btn.textContent = 'Generating…';
-
-  try {
-    const stampEl = document.getElementById('stamp');
-    const narrativeEl = document.getElementById('narrative');
-
-    const response = await fetch('/api/generate-pdf', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-        user_id: currentUserId,
-        address: document.getElementById('price').value ? `$${document.getElementById('price').value} property` : 'Unnamed property',
-        inputs: lastInputs,
-        results: lastMetrics,
-        narrative: document.getElementById('narrative').textContent
-      })
-    });
-
-    if (!response.ok) throw new Error('PDF generation failed');
-
-    const blob = await response.blob();
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'deal-report.pdf';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
-
-  } catch (err) {
-    console.error(err);
-    alert('Could not generate the PDF. Try again.');
-  }
-
-  btn.disabled = false;
-  btn.textContent = 'Download PDF report';
-});
-document.getElementById('lookupBtn').addEventListener('click', async () => {
-  const address = document.getElementById('lookupAddress').value.trim();
-  const statusEl = document.getElementById('lookupStatus');
-
-  if (!address) {
-    statusEl.textContent = 'Enter an address first.';
-    return;
-  }
-
-  statusEl.textContent = 'Looking up comps…';
-
-  try {
-    const response = await fetch('/api/comps?address=' + encodeURIComponent(address) + '&user_id=' + encodeURIComponent(currentUserId || ''));
-   if (response.status === 429) {
-      const { error } = await response.json();
-      statusEl.textContent = error;
+  document.getElementById('pdfBtn').addEventListener('click', async () => {
+    if (!lastInputs || !lastMetrics) {
+      alert('Run an analysis first before downloading a PDF.');
       return;
     }
 
-    const { estimatedValue, sqft, comps, remainingLookups } = await response.json();
+    const btn = document.getElementById('pdfBtn');
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
 
-    if (sqft) document.getElementById('sqft').value = sqft;
+    try {
+      const response = await fetch('/api/generate-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          user_id: currentUserId,
+          address: document.getElementById('price').value ? `$${document.getElementById('price').value} property` : 'Unnamed property',
+          inputs: lastInputs,
+          results: lastMetrics,
+          narrative: document.getElementById('narrative').textContent
+        })
+      });
 
-    if (comps && comps.length > 0) {
-      const ids = [['c1p','c1s'], ['c2p','c2s'], ['c3p','c3s']];
-      comps.forEach((c, i) => {
-        if (ids[i]) {
-          document.getElementById(ids[i][0]).value = c.price || '';
-          document.getElementById(ids[i][1]).value = c.sqft || '';
+      if (!response.ok) throw new Error('PDF generation failed');
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'deal-report.pdf';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+
+    } catch (err) {
+      console.error(err);
+      alert('Could not generate the PDF. Try again.');
+    }
+
+    btn.disabled = false;
+    btn.textContent = 'Download PDF report';
+  });
+
+  document.getElementById('lookupBtn').addEventListener('click', async () => {
+    const address = document.getElementById('lookupAddress').value.trim();
+    const statusEl = document.getElementById('lookupStatus');
+
+    if (!address) {
+      statusEl.textContent = 'Enter an address first.';
+      return;
+    }
+
+    statusEl.textContent = 'Looking up comps…';
+
+    try {
+      const response = await fetch('/api/comps?address=' + encodeURIComponent(address) + '&user_id=' + encodeURIComponent(currentUserId || ''));
+
+      if (response.status === 429) {
+        const { error } = await response.json();
+        statusEl.textContent = error;
+        return;
+      }
+
+      const { estimatedValue, sqft, comps, remainingLookups } = await response.json();
+
+      if (sqft) document.getElementById('sqft').value = sqft;
+
+      if (comps && comps.length > 0) {
+        const ids = [['c1p','c1s'], ['c2p','c2s'], ['c3p','c3s']];
+        comps.forEach((c, i) => {
+          if (ids[i]) {
+            document.getElementById(ids[i][0]).value = c.price || '';
+            document.getElementById(ids[i][1]).value = c.sqft || '';
+          }
+        });
+      }
+
+      statusEl.textContent = (estimatedValue
+        ? `Done — estimated market value: $${Math.round(estimatedValue).toLocaleString()}`
+        : 'Done — comps filled in below.') + ` (${remainingLookups} lookups left this month)`;
+
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = 'Could not look up comps for that address.';
+    }
+  });
+
+  document.getElementById('maoBtn').addEventListener('click', async () => {
+    const targetCoC = parseFloat(document.getElementById('targetCoC').value) || null;
+    const targetDSCR = parseFloat(document.getElementById('targetDSCR').value) || null;
+    const resultEl = document.getElementById('maoResult');
+
+    if (!targetCoC && !targetDSCR) {
+      resultEl.textContent = 'Enter a target cash-on-cash return or DSCR first.';
+      return;
+    }
+
+    resultEl.textContent = 'Calculating…';
+
+    const base = {
+      downPct: num('downpct'), rate: num('rate'), termYears: num('term'),
+      closing: num('closing'), rehab: num('rehab'), rent: num('rent'),
+      vacancyPct: num('vacancy'), annualTaxes: num('taxes'), annualInsurance: num('insurance'),
+      hoaMonthly: num('hoa'), mgmtPct: num('mgmt'), maintPct: num('maint'),
+      sqft: num('sqft'),
+      comps: [
+        { price: num('c1p'), sqft: num('c1s') },
+        { price: num('c2p'), sqft: num('c2s') },
+        { price: num('c3p'), sqft: num('c3s') },
+      ]
+    };
+
+    try {
+      const response = await fetch('/api/mao', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetCashOnCash: targetCoC, targetDSCR, ...base })
+      });
+
+      if (!response.ok) throw new Error('MAO calculation failed');
+
+     const { maxOffer, returnBasedMax, marketValueEstimate, bindingConstraint } = await response.json();
+
+      let html = `<strong style="color:var(--brass); font-size:16px;">Max offer: $${maxOffer.toLocaleString()}</strong>`;
+      html += `<div style="margin-top:8px; font-size:11px; color:rgba(16,27,41,0.6);">`;
+      html += `Return-target ceiling: $${returnBasedMax.toLocaleString()}`;
+      if (marketValueEstimate) {
+        html += ` &nbsp;·&nbsp; Comps-based value: $${marketValueEstimate.toLocaleString()}`;
+      }
+      html += `<br>Binding constraint: <strong>${bindingConstraint}</strong>`;
+      if (!marketValueEstimate) {
+        html += ` <span style="opacity:0.7;">(no comps entered — this is return-based only, not checked against market value)</span>`;
+      }
+   html += `</div>`;
+
+      resultEl.innerHTML = html;
+      window.lastMaoResult = { maxOffer, returnBasedMax, marketValueEstimate, bindingConstraint };
+
+    } catch (err) {
+      console.error(err);
+      resultEl.textContent = 'Could not calculate — check your rent/expense fields above.';
+    }
+  });
+
+  async function loadSavedDeals(){
+    const container = document.getElementById('savedDeals');
+    if (!currentUserId) {
+      container.textContent = 'Sign in to see your saved deals.';
+      return;
+    }
+    try {
+      const response = await fetch('/api/deals?user_id=' + encodeURIComponent(currentUserId));
+      const { deals } = await response.json();
+
+      if (!deals || deals.length === 0) {
+        container.textContent = 'No saved deals yet.';
+        return;
+      }
+
+      container.innerHTML = deals.map((d, i) => `
+        <div class="savedDealRow" data-index="${i}" style="padding:10px 0; border-bottom:1px solid rgba(16,27,41,0.1); cursor:pointer;">
+          <strong>${d.address || 'Unnamed property'}</strong><br>
+          Cap Rate: ${d.results?.capRate !== undefined && d.results.capRate !== null ? d.results.capRate.toFixed(1) + '%' : '—'} ·
+          Cash Flow: ${d.results?.cashFlowMonthly !== undefined && d.results.cashFlowMonthly !== null ? '$' + Math.round(d.results.cashFlowMonthly) : '—'} ·
+          Saved: ${new Date(d.created_at).toLocaleDateString()}
+        </div>
+      `).join('');
+
+      window.savedDealsCache = deals;
+
+      document.querySelectorAll('.savedDealRow').forEach(row => {
+        row.addEventListener('click', () => {
+          const deal = window.savedDealsCache[row.dataset.index];
+          viewSavedDeal(deal);
+        });
+      });
+    } catch (err) {
+      console.error(err);
+      container.textContent = 'Could not load saved deals.';
+    }
+  }
+
+  function viewSavedDeal(deal){
+    const inputs = deal.inputs || {};
+
+    const fieldMap = {
+      price: 'price', downPct: 'downpct', rate: 'rate', termYears: 'term',
+      closing: 'closing', rehab: 'rehab', rent: 'rent', vacancyPct: 'vacancy',
+      annualTaxes: 'taxes', annualInsurance: 'insurance', hoaMonthly: 'hoa',
+      mgmtPct: 'mgmt', maintPct: 'maint', sqft: 'sqft'
+    };
+
+    Object.entries(fieldMap).forEach(([key, id]) => {
+      const el = document.getElementById(id);
+      if (el && inputs[key] !== undefined && inputs[key] !== null) el.value = inputs[key];
+    });
+
+    if (inputs.comps && Array.isArray(inputs.comps)) {
+      const compIds = [['c1p','c1s'], ['c2p','c2s'], ['c3p','c3s']];
+      inputs.comps.forEach((c, i) => {
+        if (compIds[i]) {
+          document.getElementById(compIds[i][0]).value = c.price || '';
+          document.getElementById(compIds[i][1]).value = c.sqft || '';
         }
       });
     }
 
-   statusEl.textContent = (estimatedValue
-      ? `Done — estimated market value: $${Math.round(estimatedValue).toLocaleString()}`
-      : 'Done — comps filled in below.') + ` (${remainingLookups} lookups left this month)`;
+    const m = deal.results;
 
-  } catch (err) {
-    console.error(err);
-    statusEl.textContent = 'Could not look up comps for that address.';
+    const stampEl = document.getElementById('stamp');
+    const scoreVerdict = (() => {
+      let score = 0;
+      if (m.cashFlowMonthly > 0) score++; else score--;
+      if (m.capRate >= 6) score++; else if (m.capRate < 4) score--;
+      if (m.cashOnCash >= 8) score++; else if (m.cashOnCash < 4) score--;
+      if (m.dscr !== null) { if (m.dscr >= 1.2) score++; else if (m.dscr < 1.0) score -= 2; }
+      if (score >= 3) return {label:'Clear to Proceed', cls:'green'};
+      if (score >= 0) return {label:'Proceed with Caution', cls:'amber'};
+      return {label:'Do Not Proceed', cls:'red'};
+    })();
+
+    stampEl.textContent = scoreVerdict.label;
+    stampEl.className = 'stamp ' + scoreVerdict.cls;
+
+    document.getElementById('metrics').innerHTML = renderMetrics(m);
+    document.getElementById('narrative').textContent = deal.narrative || '(No saved narrative for this older entry.)';
+    document.getElementById('results').classList.add('show');
+
+    lastInputs = deal.inputs;
+    lastMetrics = deal.results;
+    lastNarrative = deal.narrative;
+
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   }
-});
-
-async function loadSavedDeals(){
-  const container = document.getElementById('savedDeals');
-  if (!currentUserId) {
-    container.textContent = 'Sign in to see your saved deals.';
-    return;
-  }
-  try {
-    const response = await fetch('/api/deals?user_id=' + encodeURIComponent(currentUserId));
-    const { deals } = await response.json();
-
-    if (!deals || deals.length === 0) {
-      container.textContent = 'No saved deals yet.';
-      return;
-    }
-
-   container.innerHTML = deals.map((d, i) => `
-      <div class="savedDealRow" data-index="${i}" style="padding:10px 0; border-bottom:1px solid rgba(16,27,41,0.1); cursor:pointer;">
-        <strong>${d.address || 'Unnamed property'}</strong><br>
-        Cap Rate: ${d.results?.capRate !== undefined && d.results.capRate !== null ? d.results.capRate.toFixed(1) + '%' : '—'} ·
-        Cash Flow: ${d.results?.cashFlowMonthly !== undefined && d.results.cashFlowMonthly !== null ? '$' + Math.round(d.results.cashFlowMonthly) : '—'} ·
-        Saved: ${new Date(d.created_at).toLocaleDateString()}
-      </div>
-    `).join('');
-
-    window.savedDealsCache = deals;
-
-    document.querySelectorAll('.savedDealRow').forEach(row => {
-      row.addEventListener('click', () => {
-        const deal = window.savedDealsCache[row.dataset.index];
-        viewSavedDeal(deal);
-      });
-    });
-  } catch (err) {
-    console.error(err);
-    container.textContent = 'Could not load saved deals.';
-  }
-}
-
-loadSavedDeals();
-
-function viewSavedDeal(deal){
-  const inputs = deal.inputs || {};
-
-  const fieldMap = {
-    price: 'price', downPct: 'downpct', rate: 'rate', termYears: 'term',
-    closing: 'closing', rehab: 'rehab', rent: 'rent', vacancyPct: 'vacancy',
-    annualTaxes: 'taxes', annualInsurance: 'insurance', hoaMonthly: 'hoa',
-    mgmtPct: 'mgmt', maintPct: 'maint', sqft: 'sqft'
-  };
-
-  Object.entries(fieldMap).forEach(([key, id]) => {
-    const el = document.getElementById(id);
-    if (el && inputs[key] !== undefined && inputs[key] !== null) el.value = inputs[key];
-  });
-
-  if (inputs.comps && Array.isArray(inputs.comps)) {
-    const compIds = [['c1p','c1s'], ['c2p','c2s'], ['c3p','c3s']];
-    inputs.comps.forEach((c, i) => {
-      if (compIds[i]) {
-        document.getElementById(compIds[i][0]).value = c.price || '';
-        document.getElementById(compIds[i][1]).value = c.sqft || '';
-      }
-    });
-  }
-
-  const m = deal.results;
-
-  const stampEl = document.getElementById('stamp');
-  const scoreVerdict = (() => {
-    let score = 0;
-    if (m.cashFlowMonthly > 0) score++; else score--;
-    if (m.capRate >= 6) score++; else if (m.capRate < 4) score--;
-    if (m.cashOnCash >= 8) score++; else if (m.cashOnCash < 4) score--;
-    if (m.dscr !== null) { if (m.dscr >= 1.2) score++; else if (m.dscr < 1.0) score -= 2; }
-    if (score >= 3) return {label:'Clear to Proceed', cls:'green'};
-    if (score >= 0) return {label:'Proceed with Caution', cls:'amber'};
-    return {label:'Do Not Proceed', cls:'red'};
-  })();
-
-  stampEl.textContent = scoreVerdict.label;
-  stampEl.className = 'stamp ' + scoreVerdict.cls;
-
-  document.getElementById('metrics').innerHTML = renderMetrics(m);
-  document.getElementById('narrative').textContent = deal.narrative || '(No saved narrative for this older entry.)';
-  document.getElementById('results').classList.add('show');
-
-  lastInputs = deal.inputs;
-  lastMetrics = deal.results;
-  lastNarrative = deal.narrative;
-
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
 </script>
 
 </body>
