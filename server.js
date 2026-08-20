@@ -148,7 +148,7 @@ app.post('/api/analyze', async (req, res) => {
     const m = analyzeDeal(inputs);
     const verdict = verdictFromMetrics(m);
 
-    const payload = {
+   const payload = {
       price: inputs.price,
       monthlyRent: inputs.rent,
       capRate: m.capRate !== null ? m.capRate.toFixed(2) + '%' : 'n/a',
@@ -158,8 +158,10 @@ app.post('/api/analyze', async (req, res) => {
       vacancyAssumption: (inputs.vacancyPct || 5) + '%',
       valueVsComps: m.valueDeltaPct !== null ? m.valueDeltaPct.toFixed(1) + '%' : 'no comps provided',
       breakEvenOccupancy: m.breakEvenOccupancy !== null ? m.breakEvenOccupancy.toFixed(1) + '%' : 'n/a',
-      ruleBasedVerdict: verdict.label
+      ruleBasedVerdict: verdict.label,
+      calculatedMaxOffer: inputs.maxOffer ? `$${inputs.maxOffer.toLocaleString()} (based on your target return)` : 'not calculated'
     };
+    
 
     const systemPrompt = `You are a real estate investment analyst assistant. You will be given structured financial data for a rental property deal, already calculated. Write a clear, professional 120-170 word summary for an investor deciding whether to pursue this deal.
 
@@ -167,10 +169,11 @@ Your summary must:
 1. Open with the headline verdict already provided (do not contradict or recalculate it) and briefly say why the numbers support it.
 2. Reference the cap rate and cash-on-cash return specifically.
 3. Flag any red flags explicitly: DSCR below 1.1, negative cash flow, purchase price notably above comps, high break-even occupancy.
-4. Note one or two sensitivities worth double-checking.
-5. Do NOT recalculate or override any numbers provided.
-6. Do NOT give legal, tax, or investment advice.
-7. Keep tone direct and analytical. Output only the summary text, no preamble, no markdown formatting.`;
+4. If a calculated max offer is provided (not "not calculated"), explicitly compare the purchase price to that max offer and note whether the investor has room to negotiate or is already at/above their ceiling.
+5. Note one or two sensitivities worth double-checking.
+6. Do NOT recalculate or override any numbers provided.
+7. Do NOT give legal, tax, or investment advice.
+8. Keep tone direct and analytical. Output only the summary text, no preamble, no markdown formatting.`;
 
     const message = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',

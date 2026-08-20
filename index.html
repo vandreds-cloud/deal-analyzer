@@ -298,6 +298,67 @@
     font-family:'JetBrains Mono', monospace;
   }
 
+  .optional-tools{
+    margin-top: 28px;
+    padding: 22px 20px;
+    background: var(--paper-dim);
+    border: 1.5px dashed rgba(16,27,41,0.25);
+    border-radius: 6px;
+  }
+
+  .optional-tools-label{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: rgba(16,27,41,0.55);
+    margin-bottom: 4px;
+  }
+
+  .optional-tools-sub{
+    font-size: 12.5px;
+    color: rgba(16,27,41,0.5);
+    margin-bottom: 18px;
+  }
+
+  .tool-block{
+    padding-top: 18px;
+    border-top: 1px solid rgba(16,27,41,0.1);
+    margin-top: 18px;
+  }
+
+  .tool-block:first-of-type{
+    padding-top: 0;
+    border-top: none;
+    margin-top: 0;
+  }
+
+  .tool-block-title{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--ink-2);
+    margin-bottom: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .ready-divider{
+    border-top: 2px solid var(--ink);
+    padding-top: 24px;
+    margin-top: 28px;
+    text-align: center;
+  }
+
+  .ready-divider p{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: rgba(16,27,41,0.5);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin: 0;
+  }
+
   @media (max-width: 560px){
     .grid, .grid.narrow{ grid-template-columns: 1fr 1fr; }
     .metrics{ grid-template-columns: 1fr 1fr; }
@@ -319,8 +380,7 @@
     <div id="upgradeArea" style="text-align:center; margin-bottom:20px;"></div>
     <div class="eyebrow">Field Ledger · Deal Inspection</div>
     <h1>Rental Deal Analyzer</h1>
-    <p>Enter a property's numbers. Get the cash flow, the returns, and a straight verdict on whether it holds up.</p>
-  </div>
+   <p>Enter a property's numbers. Get the cash flow, the returns, a straight verdict, and the maximum offer that still hits your target return.</p>
 
   <div class="ledger">
 
@@ -384,54 +444,67 @@
       </div>
     </div>
 
-    <div class="section-title">Comps (for valuation check)</div>
-    <div class="grid">
-      <div class="field" style="grid-column: 1 / -1;">
-        <label for="lookupAddress">Property address (optional — auto-fills comps below)</label>
-        <input type="text" id="lookupAddress" placeholder="123 Main St, Springfield, IL 62704">
+    <div class="optional-tools">
+      <div class="optional-tools-label">Optional Tools</div>
+      <div class="optional-tools-sub">Neither is required to run an analysis — use them to auto-fill comps or check your target return before you commit to a price.</div>
+
+      <div class="tool-block">
+        <div class="tool-block-title">Comps Lookup</div>
+        <div class="grid">
+          <div class="field" style="grid-column: 1 / -1;">
+            <label for="lookupAddress">Property address (auto-fills comps below)</label>
+            <input type="text" id="lookupAddress" placeholder="123 Main St, Springfield, IL 62704">
+          </div>
+        </div>
+        <button type="button" id="lookupBtn" style="margin-top:10px; background:var(--ink-3); color:var(--paper); border:none; padding:8px 16px; border-radius:3px; font-family:'JetBrains Mono', monospace; font-size:12px; cursor:pointer;">Look up comps</button>
+        <div id="lookupStatus" style="font-family:'JetBrains Mono', monospace; font-size:12px; margin-top:8px;"></div>
+
+        <div class="grid" style="margin-top:14px;">
+          <div class="field">
+            <label for="sqft">Subject property sq ft</label>
+            <input type="number" id="sqft" placeholder="1450">
+          </div>
+        </div>
+
+        <div class="grid" style="margin-top:14px;">
+          <div class="field comp-row">
+            <span class="comp-label">Comp 1</span>
+            <div class="sub"><label>Sale price ($)</label><input type="number" id="c1p" placeholder="292000"></div>
+            <div class="sub"><label>Sq ft</label><input type="number" id="c1s" placeholder="1480"></div>
+          </div>
+          <div class="field comp-row">
+            <span class="comp-label">Comp 2</span>
+            <div class="sub"><label>Sale price ($)</label><input type="number" id="c2p" placeholder="275000"></div>
+            <div class="sub"><label>Sq ft</label><input type="number" id="c2s" placeholder="1390"></div>
+          </div>
+          <div class="field comp-row">
+            <span class="comp-label">Comp 3</span>
+            <div class="sub"><label>Sale price ($)</label><input type="number" id="c3p" placeholder="301000"></div>
+            <div class="sub"><label>Sq ft</label><input type="number" id="c3s" placeholder="1510"></div>
+          </div>
+        </div>
       </div>
-    </div>
-    <button type="button" id="lookupBtn" style="margin-top:10px; background:var(--ink-3); color:var(--paper); border:none; padding:8px 16px; border-radius:3px; font-family:'JetBrains Mono', monospace; font-size:12px; cursor:pointer;">Look up comps</button>
-    <div id="lookupStatus" style="font-family:'JetBrains Mono', monospace; font-size:12px; margin-top:8px;"></div>
-    <div class="grid" style="margin-top:14px;">
-      <div class="field">
-        <label for="sqft">Subject property sq ft</label>
-        <input type="number" id="sqft" placeholder="1450">
+
+      <div class="tool-block">
+        <div class="tool-block-title">Maximum Allowed Offer</div>
+        <div class="grid">
+          <div class="field">
+            <label for="targetCoC">Target cash-on-cash return (%)</label>
+            <input type="number" id="targetCoC" placeholder="10">
+          </div>
+          <div class="field">
+            <label for="targetDSCR">Target DSCR</label>
+            <input type="number" step="0.01" id="targetDSCR" placeholder="1.3">
+          </div>
+        </div>
+        <button type="button" id="maoBtn" style="margin-top:10px; background:var(--ink-3); color:var(--paper); border:none; padding:8px 16px; border-radius:3px; font-family:'JetBrains Mono', monospace; font-size:12px; cursor:pointer;">Calculate max offer</button>
+        <div id="maoResult" style="font-family:'JetBrains Mono', monospace; font-size:13px; margin-top:10px;"></div>
       </div>
     </div>
 
-    <div class="grid" style="margin-top:14px;">
-      <div class="field comp-row">
-        <span class="comp-label">Comp 1</span>
-        <div class="sub"><label>Sale price ($)</label><input type="number" id="c1p" placeholder="292000"></div>
-        <div class="sub"><label>Sq ft</label><input type="number" id="c1s" placeholder="1480"></div>
-      </div>
-      <div class="field comp-row">
-        <span class="comp-label">Comp 2</span>
-        <div class="sub"><label>Sale price ($)</label><input type="number" id="c2p" placeholder="275000"></div>
-        <div class="sub"><label>Sq ft</label><input type="number" id="c2s" placeholder="1390"></div>
-      </div>
-      <div class="field comp-row">
-        <span class="comp-label">Comp 3</span>
-        <div class="sub"><label>Sale price ($)</label><input type="number" id="c3p" placeholder="301000"></div>
-        <div class="sub"><label>Sq ft</label><input type="number" id="c3s" placeholder="1510"></div>
-      </div>
+    <div class="ready-divider">
+      <p>Ready to analyze</p>
     </div>
-
-    <div class="section-title">Maximum Allowed Offer (optional)</div>
-    <div class="grid">
-      <div class="field">
-        <label for="targetCoC">Target cash-on-cash return (%)</label>
-        <input type="number" id="targetCoC" placeholder="10">
-      </div>
-      <div class="field">
-        <label for="targetDSCR">Target DSCR</label>
-        <input type="number" step="0.01" id="targetDSCR" placeholder="1.3">
-      </div>
-    </div>
-    <button type="button" id="maoBtn" style="margin-top:10px; background:var(--ink-3); color:var(--paper); border:none; padding:8px 16px; border-radius:3px; font-family:'JetBrains Mono', monospace; font-size:12px; cursor:pointer;">Calculate max offer</button>
-    <div id="maoResult" style="font-family:'JetBrains Mono', monospace; font-size:13px; margin-top:10px;"></div>
-
     <button class="run" id="runBtn">Run the analysis</button>
 
     <div class="results" id="results">
@@ -595,11 +668,11 @@
     document.getElementById('results').classList.add('show');
     document.getElementById('narrative').innerHTML = '<span class="loading">Drafting summary…</span>';
 
-    try {
+   try {
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(inputs)
+        body: JSON.stringify({ ...inputs, maxOffer: window.lastMaoResult ? window.lastMaoResult.maxOffer : null })
       });
 
       if (!response.ok) throw new Error('Server error');
@@ -610,7 +683,7 @@
       stampEl.textContent = verdict.label;
       stampEl.className = 'stamp ' + verdict.cls;
 
-document.getElementById('metrics').innerHTML = renderMetrics(metrics);
+      document.getElementById('metrics').innerHTML = renderMetrics(metrics);
       document.getElementById('narrative').textContent = narrative;
 
       const maoNoteEl = document.getElementById('maoCompare');
@@ -778,7 +851,7 @@ document.getElementById('metrics').innerHTML = renderMetrics(metrics);
       resultEl.textContent = 'Enter a target cash-on-cash return or DSCR first.';
       return;
     }
-if (num('rent') <= 0) {
+    if (num('rent') <= 0) {
       resultEl.textContent = 'Enter monthly rent before calculating a max offer.';
       return;
     }
@@ -786,7 +859,6 @@ if (num('rent') <= 0) {
     resultEl.textContent = 'Calculating…';
 
     const base = {
-    
       downPct: num('downpct'), rate: num('rate'), termYears: num('term'),
       closing: num('closing'), rehab: num('rehab'), rent: num('rent'),
       vacancyPct: num('vacancy'), annualTaxes: num('taxes'), annualInsurance: num('insurance'),
@@ -808,7 +880,7 @@ if (num('rent') <= 0) {
 
       if (!response.ok) throw new Error('MAO calculation failed');
 
-     const { maxOffer, returnBasedMax, marketValueEstimate, bindingConstraint } = await response.json();
+      const { maxOffer, returnBasedMax, marketValueEstimate, bindingConstraint } = await response.json();
 
       let html = `<strong style="color:var(--brass); font-size:16px;">Max offer: $${maxOffer.toLocaleString()}</strong>`;
       html += `<div style="margin-top:8px; font-size:11px; color:rgba(16,27,41,0.6);">`;
@@ -820,7 +892,7 @@ if (num('rent') <= 0) {
       if (!marketValueEstimate) {
         html += ` <span style="opacity:0.7;">(no comps entered — this is return-based only, not checked against market value)</span>`;
       }
-   html += `</div>`;
+      html += `</div>`;
 
       resultEl.innerHTML = html;
       window.lastMaoResult = { maxOffer, returnBasedMax, marketValueEstimate, bindingConstraint };
