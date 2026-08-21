@@ -37,6 +37,8 @@ function checkNonDisclosure(address) {
   return NON_DISCLOSURE_STATES.includes(state) ? state : null;
 }
 const REQUIRE_PAYMENT = process.env.REQUIRE_PAYMENT === 'true';
+const REQUIRE_TOS_ACCEPTANCE = process.env.REQUIRE_TOS_ACCEPTANCE === 'true';
+
 
 function analyzeDeal(inputs) {
   const price = inputs.price || 0;
@@ -128,7 +130,42 @@ function analyzeDeal(inputs) {
 
   return result;
 }
+async function checkAnalysisAllowance(user_id) {
+  if (!user_id) return { allowed: false, reason: 'Sign in required to run an analysis.' };
 
+  let isSubscriber = false;
+  if (REQUIRE_PAYMENT) {
+    const { data: sub } = await supabase
+      .from('subscriptions')
+      .select('status')
+      .eq('user_id', user_id)
+      .eq('status', 'active')
+      .maybeSingle();
+    isSubscriber = !!sub;
+  }
+
+  if (isSubscriber) return { allowed: true, isSubscriber: true };
+
+  const { data: usage } = await supabase
+    .from('usage_tracking')
+    .select('analysis_count')
+    .eq('user_id', user_id)
+    .maybeSingle();
+
+  const used = usage?.analysis_count || 0;
+
+  if (used >= ANALYSIS_FREE_LIMIT) {
+    return { allowed: false, reason: `You've used your ${ANALYSIS_FREE_LIMIT} free analyses. Upgrade to Pro for unlimited.` };
+  }
+
+  return { allowed: true, isSubscriber: false, used };
+}
+
+async function incrementAnalysisCount(user_id, currentUsed) {
+  await supabase
+    .from('usage_tracking')
+    .upsert([{ user_id, analysis_count: currentUsed + 1 }], { onConflict: 'user_id' });
+}
 function verdictFromMetrics(m) {
   let score = 0;
   if (m.cashFlowMonthly !== null && m.cashFlowMonthly > 0) score++; else score--;
@@ -145,6 +182,11 @@ function verdictFromMetrics(m) {
 app.post('/api/analyze', async (req, res) => {
   try {
     const inputs = req.body;
+    const allowance = await checkAnalysisAllowance(inputs.user_id);
+    if (!allowance.allowed) {
+      return res.status(429).json({ error: allowance.reason });
+    }
+
     const m = analyzeDeal(inputs);
     const verdict = verdictFromMetrics(m);
 
@@ -188,7 +230,11 @@ Your summary must:
       .join('\n')
       .trim();
 
-    res.json({ metrics: m, verdict, narrative });
+    if (!allowance.isSubscriber) {
+      await incrementAnalysisCount(inputs.user_id, allowance.used);
+    }
+
+    res.json({ metrics: m, verdict, narrative, remainingAnalyses: allowance.isSubscriber ? null : ANALYSIS_FREE_LIMIT - (allowance.used + 1) });
 
   } catch (err) {
     console.error(err);
@@ -277,6 +323,44 @@ app.post('/api/create-checkout-session', async (req, res) => {
 app.get('/api/payment-status', (req, res) => {
   res.json({ requirePayment: REQUIRE_PAYMENT });
 });
+
+app.get('/api/tos-status', async (req, res) => {
+  const { user_id } = req.query;
+  let alreadyAccepted = false;
+
+  if (user_id) {
+    const { data } = await supabase
+      .from('usage_tracking')
+      .select('tos_accepted')
+      .eq('user_id', user_id)
+      .maybeSingle();
+    alreadyAccepted = data?.tos_accepted || false;
+  }
+
+  res.json({ requireTos: REQUIRE_TOS_ACCEPTANCE, alreadyAccepted });
+});
+
+app.post('/api/accept-tos', async (req, res) => {
+  try {
+    const { user_id } = req.body;
+    if (!user_id) return res.status(400).json({ error: 'Sign in required.' });
+
+    const { data: existing } = await supabase
+      .from('usage_tracking')
+      .select('*')
+      .eq('user_id', user_id)
+      .maybeSingle();
+
+    await supabase
+      .from('usage_tracking')
+      .upsert([{ ...(existing || { user_id }), tos_accepted: true }], { onConflict: 'user_id' });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Could not save acceptance.' });
+  }
+});
 // Check if a specific user has an active subscription
 app.get('/api/subscription-status', async (req, res) => {
   try {
@@ -336,7 +420,24 @@ if (event.type === 'checkout.session.completed') {
 // Generate a branded PDF report for a deal
 app.post('/api/generate-pdf', async (req, res) => {
   try {
-    const { address, inputs, results, verdict, narrative } = req.body;
+    const { address, inputs, results, verdict, narrative, user_id } = req.body;
+
+    if (!user_id) {
+      return res.status(401).json({ error: 'Sign in required to download a PDF report.' });
+    }
+
+    if (REQUIRE_PAYMENT) {
+      const { data: sub } = await supabase
+        .from('subscriptions')
+        .select('status')
+        .eq('user_id', user_id)
+        .eq('status', 'active')
+        .maybeSingle();
+
+      if (!sub) {
+        return res.status(402).json({ error: 'PDF export is a Pro feature. Upgrade to download reports.' });
+      }
+    }
 
     const html = `
       <html>
@@ -386,7 +487,9 @@ app.post('/api/generate-pdf', async (req, res) => {
 });
 
 // Look up comps and estimated value for an address using RentCast
-const COMPS_MONTHLY_LIMIT = 15;
+const COMPS_FREE_LIMIT = 3;
+const COMPS_SUBSCRIBER_MONTHLY_LIMIT = 50;
+const ANALYSIS_FREE_LIMIT = 10;
 
 app.get('/api/comps', async (req, res) => {
   try {
@@ -394,26 +497,38 @@ app.get('/api/comps', async (req, res) => {
     if (!address) return res.status(400).json({ error: 'Address is required.' });
     if (!user_id) return res.status(400).json({ error: 'Sign in required for comps lookup.' });
 
-    const month = new Date().toISOString().slice(0, 7);
+    const currentMonth = new Date().toISOString().slice(0, 7);
 
     const { data: usage } = await supabase
       .from('usage_tracking')
-      .select('comps_count')
+      .select('free_lookups_used, month, comps_count')
       .eq('user_id', user_id)
-      .eq('month', month)
       .maybeSingle();
 
-    const currentCount = usage?.comps_count || 0;
+    const freeUsed = usage?.free_lookups_used || 0;
+    const monthlyCount = (usage?.month === currentMonth) ? (usage?.comps_count || 0) : 0;
 
-    if (currentCount >= COMPS_MONTHLY_LIMIT) {
-      return res.status(429).json({ error: `Monthly comps lookup limit (${COMPS_MONTHLY_LIMIT}) reached. Resets next month.` });
+    let isSubscriber = false;
+    if (REQUIRE_PAYMENT) {
+      const { data: sub } = await supabase
+        .from('subscriptions')
+        .select('status')
+        .eq('user_id', user_id)
+        .eq('status', 'active')
+        .maybeSingle();
+      isSubscriber = !!sub;
+    }
+
+    if (!isSubscriber && freeUsed >= COMPS_FREE_LIMIT) {
+      return res.status(429).json({ error: `You've used your ${COMPS_FREE_LIMIT} free comps lookups. Upgrade to Pro for more.` });
+    }
+    if (isSubscriber && monthlyCount >= COMPS_SUBSCRIBER_MONTHLY_LIMIT) {
+      return res.status(429).json({ error: `Monthly comps limit (${COMPS_SUBSCRIBER_MONTHLY_LIMIT}) reached. Resets next month.` });
     }
 
     const response = await fetch(
       `https://api.rentcast.io/v1/avm/value?address=${encodeURIComponent(address)}&compCount=3`,
-      {
-        headers: { 'X-Api-Key': RENTCAST_API_KEY }
-      }
+      { headers: { 'X-Api-Key': RENTCAST_API_KEY } }
     );
 
     if (!response.ok) {
@@ -429,17 +544,25 @@ app.get('/api/comps', async (req, res) => {
       sqft: c.squareFootage || 0
     }));
 
+    const nonDisclosureState = checkNonDisclosure(address);
+
     await supabase
       .from('usage_tracking')
-      .upsert([{ user_id, month, comps_count: currentCount + 1 }], { onConflict: 'user_id,month' });
-
-    const nonDisclosureState = checkNonDisclosure(address);
+      .upsert([{
+        user_id,
+        free_lookups_used: isSubscriber ? freeUsed : freeUsed + 1,
+        month: currentMonth,
+        comps_count: isSubscriber ? monthlyCount + 1 : monthlyCount
+      }], { onConflict: 'user_id' });
 
     res.json({
       estimatedValue: data.price || null,
       sqft: data.subjectProperty?.squareFootage || null,
       comps,
-      remainingLookups: COMPS_MONTHLY_LIMIT - (currentCount + 1),
+      remainingLookups: isSubscriber
+        ? COMPS_SUBSCRIBER_MONTHLY_LIMIT - (monthlyCount + 1)
+        : COMPS_FREE_LIMIT - (freeUsed + 1),
+      isSubscriber,
       nonDisclosureState
     });
 
@@ -448,7 +571,6 @@ app.get('/api/comps', async (req, res) => {
     res.status(500).json({ error: 'Comps lookup failed.' });
   }
 });
-
  function metricsAtPrice(price, base) {
   return analyzeDeal({ ...base, price });
 }

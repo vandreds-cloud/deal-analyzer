@@ -378,6 +378,10 @@
 <div class="masthead">
     <div id="clerk-auth" style="display:flex; justify-content:center; margin-bottom:12px;"></div>
     <div id="upgradeArea" style="text-align:center; margin-bottom:20px;"></div>
+    <div id="tosArea" style="text-align:center; margin-bottom:16px; font-size:12px; font-family:'JetBrains Mono', monospace;"></div>
+    <div style="text-align:center; margin-bottom:16px;">
+      <a href="/how-to.html" target="_blank" style="font-family:'JetBrains Mono', monospace; font-size:11px; color:rgba(244,239,226,0.55); text-decoration:none; border-bottom:1px dashed rgba(244,239,226,0.4); padding-bottom:2px;">📖 How to use this tool</a>
+    </div>
     <div class="eyebrow">Field Ledger · Deal Inspection</div>
     <h1>Rental Deal Analyzer</h1>
    <p>Enter a property's numbers. Get the cash flow, the returns, a straight verdict, and the maximum offer that still hits your target return.</p>
@@ -555,7 +559,34 @@
 
     loadSavedDeals();
     renderUpgradeButton();
+    renderTosCheckbox();
   });
+
+  window.tosAlreadyAccepted = false;
+
+  async function renderTosCheckbox(){
+    const area = document.getElementById('tosArea');
+    try {
+      const res = await fetch('/api/tos-status?user_id=' + encodeURIComponent(currentUserId || ''));
+      const { requireTos, alreadyAccepted } = await res.json();
+
+      window.tosAlreadyAccepted = alreadyAccepted;
+
+      if (!requireTos || !currentUserId || alreadyAccepted) {
+        area.innerHTML = '';
+        return;
+      }
+
+      area.innerHTML = `
+        <label style="color:rgba(244,239,226,0.7); cursor:pointer;">
+          <input type="checkbox" id="tosCheckbox" style="margin-right:6px;">
+          I agree to the <a href="/terms.html" target="_blank" style="color:var(--brass-bright);">Terms of Service</a>
+        </label>
+      `;
+    } catch (err) {
+      console.error(err);
+    }
+  }
 
   async function renderUpgradeButton(){
     const area = document.getElementById('upgradeArea');
@@ -564,7 +595,7 @@
       const { requirePayment } = await statusRes.json();
 
       if (!requirePayment) {
-        area.innerHTML = '<span style="font-family:\'JetBrains Mono\', monospace; font-size:11px; color:rgba(244,239,226,0.4);">Testing mode — all features free</span>';
+        area.innerHTML = '<span style="font-family:\'JetBrains Mono\', monospace; font-size:11px; color:rgba(244,239,226,0.4);"></span>';
         return;
       }
 
@@ -656,9 +687,28 @@
       ]
     };
 
+ if (!currentUserId) {
+      alert('Please sign in to run an analysis.');
+      return;
+    }
+
     if (inputs.price <= 0 || inputs.rent <= 0) {
       alert('Enter at least a purchase price and monthly rent to run the analysis.');
       return;
+    }
+
+   const tosCheckbox = document.getElementById('tosCheckbox');
+    if (tosCheckbox && !tosCheckbox.checked && !window.tosAlreadyAccepted) {
+      alert('Please agree to the Terms of Service before running an analysis.');
+      return;
+    }
+    if (tosCheckbox && tosCheckbox.checked && !window.tosAlreadyAccepted) {
+      fetch('/api/accept-tos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: currentUserId })
+      });
+      window.tosAlreadyAccepted = true;
     }
 
     const btn = document.getElementById('runBtn');
@@ -668,12 +718,20 @@
     document.getElementById('results').classList.add('show');
     document.getElementById('narrative').innerHTML = '<span class="loading">Drafting summary…</span>';
 
-   try {
+  try {
       const response = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...inputs, maxOffer: window.lastMaoResult ? window.lastMaoResult.maxOffer : null })
+        body: JSON.stringify({ ...inputs, user_id: currentUserId, maxOffer: window.lastMaoResult ? window.lastMaoResult.maxOffer : null })
       });
+
+      if (response.status === 429) {
+        const { error } = await response.json();
+        document.getElementById('narrative').textContent = error;
+        btn.disabled = false;
+        btn.textContent = 'Run the analysis';
+        return;
+      }
 
       if (!response.ok) throw new Error('Server error');
 
@@ -770,7 +828,14 @@
         })
       });
 
-      if (!response.ok) throw new Error('PDF generation failed');
+      if (response.status === 402 || response.status === 401) {
+        const { error } = await response.json();
+        alert(error);
+        btn.disabled = false;
+        btn.textContent = 'Download PDF report';
+        return;
+      }
+      
 
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
@@ -811,7 +876,7 @@
         return;
       }
 
-      const { estimatedValue, sqft, comps, remainingLookups, nonDisclosureState } = await response.json();
+      const { estimatedValue, sqft, comps, remainingLookups, nonDisclosureState, isSubscriber } = await response.json();
       window.lastEstimatedValue = estimatedValue;
       window.lastNonDisclosureState = nonDisclosureState;
       if (sqft) document.getElementById('sqft').value = sqft;
@@ -826,9 +891,9 @@
         });
       }
 
-      let statusMsg = (estimatedValue
+     let statusMsg = (estimatedValue
         ? `Done — estimated market value: $${Math.round(estimatedValue).toLocaleString()}`
-        : 'Done — comps filled in below.') + ` (${remainingLookups} lookups left this month)`;
+        : 'Done — comps filled in below.') + (isSubscriber ? ` (${remainingLookups} lookups left this month)` : ` (${remainingLookups} free lookups left)`);
 
       if (nonDisclosureState) {
         statusMsg += ` ⚠️ ${nonDisclosureState} is a non-disclosure state — rental metrics are verified, but always cross-reference equity/value against local MLS data.`;
